@@ -1,0 +1,6 @@
+.vscode/
+.conda/
+__pycache__/
+*.mp4
+node_modules/
+Data/
