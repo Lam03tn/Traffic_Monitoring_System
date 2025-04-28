@@ -1,0 +1,71 @@
+
+  .violation-box {
+    background-color: #ffe6e6;
+    border: 1px solid #ff4d4d;
+    border-radius: 4px;
+    padding: 8px;
+    max-width: 300px;
+  }
+  
+  .violation-box h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+    color: #d32f2f;
+  }
+  
+  .violation-box ul {
+    margin: 0;
+    padding-left: 16px;
+    list-style-type: disc;
+  }
+  
+  .violation-box li {
+    font-size: 13px;
+    color: #333;
+    margin-bottom: 4px;
+  }
+  
+  .violation-loading {
+    color: #888;
+    font-size: 14px;
+  }
+  
+  .offline-message p {
+    margin: 0;
+    color: #888;
+  }
+  
+  .loading {
+    color: #888;
+    text-align: center;
+  }
+
+
+  .camera-status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+  }
+
+  .status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  
+  .status-dot.online {
+    background-color: #4caf50;
+  }
+  
+  .status-dot.offline {
+    background-color: #f44336;
+  }
+
+  .header-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
+  }

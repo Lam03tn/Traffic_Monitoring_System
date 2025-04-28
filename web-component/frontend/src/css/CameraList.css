@@ -1,0 +1,22 @@
+/* CameraList.css - Add these styles to existing App.css or create new file */
+.camera-title-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .violation-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    background-color: #e74c3c;
+    border-radius: 50%;
+  }
+  
+  .violation-count {
+    color: white;
+    font-size: 0.8rem;
+    font-weight: bold;
+  }
