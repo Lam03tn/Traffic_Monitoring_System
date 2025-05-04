@@ -116,8 +116,61 @@ services:
     volumes:
       - ./database-docker/minio-data:/data
   
+  triton-cpu:
+    # image: nvcr.io/nvidia/tritonserver:24.09-py3
+    image: custom-triton:24.09-py3
+    container_name: triton_server
+    command: tritonserver --model-repository=/models
+    volumes:
+      - ./AI_component/model_repository:/models
+    ports:
+      - "8000:8000" # HTTP
+      - "8001:8001" # gRPC
+      - "8002:8002" # Metrics
+    environment:
+      - TRITONSERVER_LOG_VERBOSE=1
+    shm_size: '4g'
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+  # triton-gpu:
+  #   image: nvcr.io/nvidia/tritonserver:24.09-py3
+  #   command: tritonserver --model-repository=/models
+  #   volumes:
+  #     - ./models:/models
+  #   ports:
+  #     - "8010:8000" # HTTP
+  #     - "8011:8001" # gRPC
+  #     - "8012:8002" # Metrics
+  #   environment:
+  #     - TRITONSERVER_LOG_VERBOSE=0
+  #     - NVIDIA_VISIBLE_DEVICES=all
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  #   shm_size: '1g'
+  #   ulimits:
+  #     memlock: -1
+  #     stack: 67108864
+
+  redis:
+    image: redis:7.2
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./database-docker/redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]  # bật AOF để lưu dữ liệu
+  
 volumes:
   minio-data:
+  models:
+  redis_data:
 
 networks:
   stream_net:

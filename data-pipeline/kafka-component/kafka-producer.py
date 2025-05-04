@@ -1,3 +1,4 @@
+from datetime import datetime
 from fractions import Fraction
 import io
 import subprocess
@@ -174,18 +175,28 @@ def process_video_stream(rtsp_url, producer_meta, producer_video, width, height)
         for packet in container.demux(stream):
             for frame in packet.decode():
                 img = frame.to_ndarray(format='bgr24')
+
+                # Thêm mốc thời gian lên frame để debug
+                timestamp = time.time()
+                timestamp_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                cv2.putText(
+                    img,
+                    timestamp_str,
+                    (10, 30),  # Vị trí góc trên bên trái
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,  # Kích thước chữ
+                    (0, 255, 0),  # Màu xanh lá (BGR)
+                    2  # Độ dày chữ
+                )
+
                 frames.append(img)
 
                 if time.time() - start_time >= SEGMENT_DURATION:
                     if frames:
-                        # start_cpu = time.process_time()
                         threading.Thread(
                             target=process_and_send_segment,
                             args=(frames, start_time, segment_index, width, height, producer_meta, producer_video)
                         ).start()
-
-                        # end_cpu = time.process_time()
-                        # print(f"CPU time: {end_cpu - start_cpu:.4f} giây")
                         segment_index += 1
                         frames = []
                         start_time = time.time()
