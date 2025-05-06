@@ -23,8 +23,10 @@ class MinioService:
             print("Error creating bucket:", exc)
 
     def create_camera_config(self, config_data: dict):
-        violation_type = config_data['violation_type']
-        file_path = f"{violation_type}/violation-configs-camera/{config_data['cam_id']}.json"
+        cam_id = config_data['cam_id']
+        violation_type = config_data.get('violation_type', 'default')  # Sử dụng 'default' nếu không có violation_type
+        # Định dạng đường dẫn mới: violation-configs/{cam_id}_{violation_type}.json
+        file_path = f"{cam_id}_{violation_type}.json"
         json_data = json.dumps(config_data, indent=2)
         
         try:
@@ -40,7 +42,8 @@ class MinioService:
             raise exc
 
     def get_camera_config(self, cam_id: str, violation_type: str):
-        file_path = f"{violation_type}/violation-configs-camera/{cam_id}.json"
+        # Định dạng đường dẫn mới: violation-configs/{cam_id}_{violation_type}.json
+        file_path = f"{cam_id}_{violation_type}.json"
         
         try:
             response = self.client.get_object(self.bucket, file_path)
@@ -55,7 +58,8 @@ class MinioService:
             raise exc
             
     def delete_camera_config(self, cam_id: str, violation_type: str):
-        file_path = f"{violation_type}/violation-configs-camera/{cam_id}.json"
+        # Định dạng đường dẫn mới: violation-configs/{cam_id}_{violation_type}.json
+        file_path = f"{cam_id}_{violation_type}.json"
         
         try:
             self.client.remove_object(self.bucket, file_path)

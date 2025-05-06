@@ -13,6 +13,7 @@ import io
 import av
 import boto3
 from botocore.client import Config
+import redis
 
 # Kafka settings
 CAMERA_ID = 'cam4'
@@ -38,6 +39,12 @@ TRITON_URL = "localhost:8001"
 MODEL_NAME = "vehicle_detection"
 MODEL_VERSION = "1"
 
+# Redis settings
+REDIS_HOST = 'localhost'
+REDIS_PORT = 6379
+REDIS_DB = 0
+INFERENCE_CHANNEL = f'inferences_{CAMERA_ID}'
+
 # Video processing settings
 FRAME_RATE_TARGET = 3  # 3 frames per second for inference
 SEGMENT_TIMEOUT_SECONDS = 60
@@ -48,18 +55,18 @@ s3 = boto3.client(
     's3',
     endpoint_url=f"http://{MINIO_ENDPOINT}",
     aws_access_key_id=MINIO_ACCESS_KEY,
-    aws_secret_access_key=MINIO_SECRET_KEY,
+    aws_secret_key_id=MINIO_SECRET_KEY,
     config=Config(signature_version='s3v4'),
     region_name='us-east-1'
 )
 
-# Tạo bucket nếu chưa tồn tại
+# Create bucket if it doesn't exist
 try:
     s3.head_bucket(Bucket=MINIO_BUCKET)
 except:
     s3.create_bucket(Bucket=MINIO_BUCKET)
 
-# Bộ nhớ tạm lưu video chunks
+# Temporary storage for video chunks
 video_chunks = defaultdict(lambda: {
     'chunks': {},
     'expected_chunks': None,
@@ -68,11 +75,14 @@ video_chunks = defaultdict(lambda: {
     'last_update': time.time()
 })
 
-# Kết nối Cassandra
+# Cassandra connection
 cluster = Cluster([CASSANDRA_HOSTS], port=CASSANDRA_PORT)
 session = cluster.connect(KEYSPACE)
 
-# Tạo KafkaConsumer
+# Redis connection
+redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
+
+# KafkaConsumer
 consumer = KafkaConsumer(
     TOPIC_META,
     TOPIC_VIDEO,
@@ -84,7 +94,7 @@ consumer = KafkaConsumer(
     key_deserializer=lambda k: k.decode('utf-8') if k else None
 )
 
-# Hàm tiền xử lý frame
+# Preprocess frame
 def preprocess_frame(frame, input_size=(640, 640)):
     frame_resized = cv2.resize(frame, input_size)
     frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
@@ -92,7 +102,7 @@ def preprocess_frame(frame, input_size=(640, 640)):
     frame_normalized = frame_normalized.transpose((2, 0, 1))
     return frame_resized, frame_normalized
 
-# Hàm hậu xử lý kết quả suy luận
+# Postprocess inference results
 def postprocess(model_output, score_threshold=0.35, nms_threshold=0.45):
     outputs = np.array([cv2.transpose(model_output[0])])
     rows = outputs.shape[1]
@@ -104,12 +114,13 @@ def postprocess(model_output, score_threshold=0.35, nms_threshold=0.45):
         classes_scores = outputs[0][i][4:]
         (minScore, maxScore, minClassLoc, (x, maxClassIndex)) = cv2.minMaxLoc(classes_scores)
         if maxScore >= score_threshold:
-            box = [
-                outputs[0][i][0] - (0.5 * outputs[0][i][2]),
-                outputs[0][i][1] - (0.5 * outputs[0][i][3]),
-                outputs[0][i][2],
-                outputs[0][i][3]
-            ]
+            # Original box: [x_left, y_left, w, h]
+            x = outputs[0][i][0]
+            y = outputs[0][i][1]
+            w = outputs[0][i][2]
+            h = outputs[0][i][3]
+            # Convert to [x_center, y_center, w, h]
+            box = [x, y, w, h]
             boxes.append(box)
             scores.append(maxScore)
             class_ids.append(maxClassIndex)
@@ -131,18 +142,15 @@ def postprocess(model_output, score_threshold=0.35, nms_threshold=0.45):
     num_detections = np.array(num_detections)
     return num_detections, output_boxes, output_scores, output_classids
 
-# Thực hiện inference với Triton cho batch frames
+# Perform inference with Triton for batch frames
 def perform_inference(frames, triton_client, camera_id, segment_id, frame_indices):
-    # Preprocess all frames in the batch
     processed_frames = []
     for frame in frames:
         _, frame_processed = preprocess_frame(frame)
         processed_frames.append(frame_processed)
     
-    # Stack frames into a batch tensor
-    input_tensor = np.stack(processed_frames, axis=0)  # Shape: [batch_size, C, H, W]
+    input_tensor = np.stack(processed_frames, axis=0)
 
-    # Chuẩn bị metadata cho từng frame
     metadatas = [
         json.dumps({
             'camera_id': camera_id,
@@ -151,19 +159,10 @@ def perform_inference(frames, triton_client, camera_id, segment_id, frame_indice
         }) for frame_index in frame_indices
     ]
 
-    # Chuẩn bị input cho Triton
-    inputs = [
-        grpcclient.InferInput("images", input_tensor.shape, "FP32"),
-    ]
-    
+    inputs = [grpcclient.InferInput("images", input_tensor.shape, "FP32")]
     inputs[0].set_data_from_numpy(input_tensor)
-    
-    # Chuẩn bị output
-    outputs = [
-        grpcclient.InferRequestedOutput("output0"),
-    ]
+    outputs = [grpcclient.InferRequestedOutput("output0")]
 
-    # Gửi yêu cầu suy luận
     results = triton_client.infer(
         model_name=MODEL_NAME,
         model_version=MODEL_VERSION,
@@ -171,20 +170,17 @@ def perform_inference(frames, triton_client, camera_id, segment_id, frame_indice
         outputs=outputs,
     )
     
-    # Lấy kết quả
     output_data = results.as_numpy("output0")
     
-    # Post-process results for each frame in the batch
     batch_results = []
     for i in range(len(frames)):
-        # Extract output for the i-th frame
-        frame_output = output_data[i:i+1]  # Shape: [1, ...]
+        frame_output = output_data[i:i+1]
         result = postprocess(frame_output)
         batch_results.append((result, metadatas[i]))
 
     return batch_results
 
-# Xử lý segment hoàn chỉnh
+# Process complete segment
 def process_complete_segment(segment_id, video_bytes, metadata):
     try:
         timestamp = datetime.fromtimestamp(metadata['timestamp']) \
@@ -207,13 +203,11 @@ def process_complete_segment(segment_id, video_bytes, metadata):
 
         video_url = f"http://{MINIO_ENDPOINT}/{MINIO_BUCKET}/{object_key}"
 
-        # Mở video từ bytes để inference
+        # Open video for inference
         container = av.open(io.BytesIO(video_bytes), 'r', format='mp4')
         video_stream = container.streams.video[0]
         fps = video_stream.average_rate or 30
         frame_interval = int(fps / FRAME_RATE_TARGET) if fps >= FRAME_RATE_TARGET else 1
-
-        print("Frame rate: ", frame_interval)
 
         triton_client = grpcclient.InferenceServerClient(url=TRITON_URL, verbose=False)
         inferences = []
@@ -228,7 +222,6 @@ def process_complete_segment(segment_id, video_bytes, metadata):
                     current_batch.append(img)
                     current_indices.append(frame_count)
                     
-                    # Khi đủ batch size thì gửi đi inference
                     if len(current_batch) == BATCH_SIZE:
                         batch_results = perform_inference(
                             current_batch, triton_client, camera_id, segment_id, current_indices
@@ -247,13 +240,21 @@ def process_complete_segment(segment_id, video_bytes, metadata):
                                 ],
                             }
                             inferences.append(frame_inferences)
+                            
+                            # Publish to Redis for tracking
+                            redis_message = {
+                                'frame_index': frame_index,
+                                'detections': frame_inferences['detections'],
+                                'metadata': json.loads(returned_metadata)
+                            }
+                            redis_client.publish(INFERENCE_CHANNEL, json.dumps(redis_message))
                         
                         current_batch = []
                         current_indices = []
-                        
+                
                 frame_count += 1
 
-        # Xử lý các frame còn lại trong batch chưa đủ size
+        # Process remaining frames
         if current_batch:
             batch_results = perform_inference(
                 current_batch, triton_client, camera_id, segment_id, current_indices
@@ -271,10 +272,18 @@ def process_complete_segment(segment_id, video_bytes, metadata):
                     ],
                 }
                 inferences.append(frame_inferences)
+                
+                # Publish to Redis for tracking
+                redis_message = {
+                    'frame_index': frame_index,
+                    'detections': frame_inferences['detections'],
+                    'metadata': json.loads(returned_metadata)
+                }
+                redis_client.publish(INFERENCE_CHANNEL, json.dumps(redis_message))
 
         container.close()
 
-        # Ghi vào Cassandra
+        # Store in Cassandra
         inferences_json = json.dumps(inferences)
         query = SimpleStatement(f"""
             INSERT INTO {TABLE} (camera_id, time_bucket, timestamp, video_id, video_url, inferences)
@@ -285,11 +294,11 @@ def process_complete_segment(segment_id, video_bytes, metadata):
             camera_id, time_bucket, timestamp, video_id, video_url, inferences_json
         ))
 
-        print(f"[✓] Processed and saved segment {segment_id} to MinIO and Cassandra with {len(inferences)} frames inferred")
+        print(f"[✓] Processed and saved segment {segment_id} to MinIO, Cassandra, and published to Redis with {len(inferences)} frames inferred")
     except Exception as e:
         print(f"[!] Failed to process segment {segment_id}: {e}")
 
-# Ghép segment
+# Assemble segment
 def try_assemble_segment(segment_id):
     data = video_chunks[segment_id]
     chunks = data['chunks']
@@ -300,9 +309,9 @@ def try_assemble_segment(segment_id):
         process_complete_segment(segment_id, ordered_data, data['metadata'])
         del video_chunks[segment_id]
 
-# Vòng lặp chính
+# Main loop
 def main():
-    print("[✓] Unified Kafka Consumer with Triton Batch Inference and MinIO started")
+    print("[✓] Unified Kafka Consumer with Triton Batch Inference, Cassandra, and Redis started")
     while True:
         raw_msgs = consumer.poll(timeout_ms=1000)
         now = time.time()
@@ -329,7 +338,7 @@ def main():
                 except Exception as e:
                     print(f"[!] Error in topic {topic}, segment {segment_id}: {e}")
 
-        # Xóa segment quá hạn
+        # Clean up expired segments
         expired = [
             sid for sid, data in video_chunks.items()
             if now - data['last_update'] > SEGMENT_TIMEOUT_SECONDS

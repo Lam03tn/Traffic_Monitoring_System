@@ -1,6 +1,6 @@
 from datetime import datetime
 from fastapi import WebSocket, WebSocketDisconnect
-from kafka import KafkaConsumer
+from kafka import KafkaConsumer, TopicPartition
 import asyncio
 import json
 import base64
@@ -108,7 +108,7 @@ class ConnectionManager:
             if camera_id in self.video_processors:
                 del self.video_processors[camera_id]
 
-    async def send_frame(self, websocket: WebSocket, frame_data: bytes, segment_id: str, timestamp: str, camera_id: str):
+    async def send_frame(self, websocket: WebSocket, frame_data: bytes, timestamp: str, camera_id: str):
         if websocket not in self.active_connections or self.active_connections[websocket] != camera_id:
             print(f"[DEBUG] Skipping frame for camera {camera_id} as WebSocket is not subscribed to it")
             return
@@ -118,12 +118,11 @@ class ConnectionManager:
             "frame": encoded_frame,
             "timestamp": timestamp,
             "camera_id": camera_id,
-            "segment_id": segment_id,  # Include segment ID in the message
             "type": "video_frame"
         }
 
         try:
-            print(f"[DEBUG] Sending frame for camera {camera_id}, segment {segment_id}, size {len(frame_data)} bytes")
+            print(f"[DEBUG] Sending frame for camera {camera_id}, size {len(frame_data)} bytes")
             await websocket.send_json(message)
         except Exception as e:
             print(f"[!] Error sending frame: {e}")
@@ -138,13 +137,20 @@ class ConnectionManager:
                 topic_video,
                 bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
                 auto_offset_reset='latest',
-                # group_id=f"{GROUP_ID}-{camera_id}-{time.time()}",
-                enable_auto_commit=True,
+                # group_id=f"{GROUP_ID}-{camera_id}-{int(time.time())}",  # Unique group_id mỗi lần khởi tạo
+                enable_auto_commit=False,  # Tắt auto-commit để tránh lưu offset cũ
                 value_deserializer=lambda v: v,
                 key_deserializer=lambda k: k.decode('utf-8') if k else None,
                 consumer_timeout_ms=1000
             )
             self.camera_consumers[camera_id] = consumer
+
+            # Reset offset to the latest
+            partitions = consumer.partitions_for_topic(topic_video)
+            if partitions:
+                for partition in partitions:
+                    tp = TopicPartition(topic_video, partition)
+                    consumer.seek_to_end(tp)
 
             try:
                 while camera_id in self.consumer_tasks:  # Keep running while task exists
@@ -169,7 +175,7 @@ class ConnectionManager:
                             # Send to all websockets watching this camera
                             for ws, cid in list(self.active_connections.items()):
                                 if cid == camera_id:
-                                    await self.send_frame(ws, frame_data, segment_id, timestamp, camera_id)
+                                    await self.send_frame(ws, frame_data, timestamp, camera_id)
                     
                     await asyncio.sleep(0.01)
 

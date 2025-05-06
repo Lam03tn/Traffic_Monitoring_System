@@ -67,9 +67,11 @@ def create_traffic_system_schema():
             violation_time timestamp,
             violation_id uuid,
             license_plate text,
-            camera_id uuid,
+            camera_id text,
             processed_time timestamp,
             status text,
+            video_evidence_url text,
+            image_evidence_url text,
             PRIMARY KEY ((status, violation_date, violation_type), violation_time, violation_id)
         ) WITH CLUSTERING ORDER BY (violation_time DESC);
         """
