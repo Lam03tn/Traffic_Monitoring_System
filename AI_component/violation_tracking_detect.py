@@ -6,15 +6,10 @@ import time
 from collections import defaultdict, deque
 import uuid
 import io
-import base64
 from datetime import datetime
-import redis
-from cassandra.cluster import Cluster
-from cassandra.query import SimpleStatement
 import minio
-import tempfile
-import os
 from supervision import Detections
+from cassandra.cluster import Cluster
 from bytetrack.byte_track import ByteTrack
 
 
@@ -97,8 +92,6 @@ class TrafficLightViolationHandler(ViolationHandler):
         # Iterate through tracked objects
         for i in range(len(tracked_detections.xyxy)):
             cls = tracked_detections.class_id[i]
-            if cls not in [2, 3, 5, 7]:  # Vehicles
-                continue
 
             # Get bounding box
             x1, y1, x2, y2 = tracked_detections.xyxy[i]
@@ -161,8 +154,6 @@ class LineCrossingViolationHandler(ViolationHandler):
         # Check for lane-crossing violations
         for i in range(len(tracked_detections.xyxy)):
             cls = tracked_detections.class_id[i]
-            if cls not in [2, 3, 5, 7]:  # Not a vehicle
-                continue
                 
             track_id = tracked_detections.tracker_id[i]
             x1, y1, x2, y2 = tracked_detections.xyxy[i]
@@ -201,8 +192,6 @@ class WrongWayViolationHandler(ViolationHandler):
 
         for i in range(len(tracked_detections.xyxy)):
             cls = tracked_detections.class_id[i]
-            if cls not in [2, 3, 5, 7]:  # Not a vehicle
-                continue
                 
             track_id = tracked_detections.tracker_id[i]
             x1, y1, x2, y2 = tracked_detections.xyxy[i]
@@ -234,10 +223,8 @@ class WrongWayViolationHandler(ViolationHandler):
 
 
 class EnhancedViolationDetector:
-    def __init__(self, camera_id, redis_host='localhost', redis_port=6379, 
-                 minio_endpoint='localhost:9000', cassandra_host='localhost'):
+    def __init__(self, camera_id, minio_endpoint='localhost:9000', cassandra_host='localhost'):
         self.camera_id = camera_id
-        self.redis_client = redis.Redis(host=redis_host, port=redis_port, db=0)
         self.minio_client = minio.Minio(
             minio_endpoint,
             access_key="minioadmin",
@@ -258,10 +245,9 @@ class EnhancedViolationDetector:
         self.enabled = True
         print(f"Configurations loaded for camera {camera_id}. Violation detection enabled.")
         
-        self.detection_channel = f'inferences_{camera_id}'
         self.track_history = defaultdict(lambda: deque(maxlen=40))
         self.data_deque = defaultdict(lambda: deque(maxlen=64))
-        self.frame_buffer = deque(maxlen=120)  # 4 seconds at 30 fps
+        self.frame_buffer = deque(maxlen=60)  # 4 seconds at 30 fps
         self.traffic_light_state = 'unknown'
         self.active_violations = defaultdict(dict)
         self.processed_frames = 0
@@ -269,9 +255,9 @@ class EnhancedViolationDetector:
         # Initialize ByteTrack
         self.tracker = ByteTrack(
             track_activation_threshold=0.6,   # High-confidence threshold
-            lost_track_buffer=30,            # Keep tracks for 30 frames
+            lost_track_buffer=40,            # Keep tracks for 30 frames
             minimum_matching_threshold=0.8,   # IoU threshold for matching tracks
-            frame_rate=10                     # Assumed frame rate
+            frame_rate=3                     # Assumed frame rate
         )
         
         self.violation_handlers = self.initialize_violation_handlers()
@@ -364,7 +350,6 @@ class EnhancedViolationDetector:
 
     def convert_to_supervision_detections(self, detection_data):
         """Convert detection data to Supervision Detections format for ByteTrack"""
-
         boxes = []
         scores = []
         class_ids = []
@@ -385,36 +370,22 @@ class EnhancedViolationDetector:
             class_id=np.array(class_ids)
         )
 
-    def process_detection(self, detection_data):
+    def process_detection(self, detection_data, frame):
         if not self.enabled or not detection_data:
             return
             
         try:
-            detection = json.loads(detection_data)
-            frame_index = detection['frame_index']
-            metadata = detection['metadata']
-            frame_base64 = detection.get('frame_data')
-            self.processed_frames += 1
-                
-            if frame_base64:
-                frame_data = base64.b64decode(frame_base64)
-                frame_array = np.frombuffer(frame_data, dtype=np.uint8)
-                frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
-                if frame is None:
-                    print(f"Failed to decode frame {frame_index}")
-                    return
-            else:
-                print(f"No frame data for frame {frame_index}")
-                return
-                
+            frame_index = detection_data['frame_index']
+            metadata = detection_data['metadata']
             timestamp = metadata.get('timestamp', time.time())
             self.frame_buffer.append((frame, frame_index, timestamp))
+            self.processed_frames += 1
             
             # Detect traffic light state
             self.traffic_light_state = self.detect_traffic_light_color(frame)
             
             # Convert detections to Supervision Detections format
-            detections = self.convert_to_supervision_detections(detection)
+            detections = self.convert_to_supervision_detections(detection_data)
             if detections is None:
                 print(f"No detections in frame {frame_index}")
                 return True
@@ -429,7 +400,7 @@ class EnhancedViolationDetector:
                 
                 # Calculate center point
                 center_x = (box[0] + box[2]) / 2
-                center_y = (box[3] + box[3]) / 2
+                center_y = (box[1] + box[3]) / 2
                 
                 # Store point for path tracking
                 self.data_deque[track_id].appendleft((center_x, center_y))
@@ -573,66 +544,9 @@ class EnhancedViolationDetector:
         except Exception as e:
             print(f"Error saving violation evidence: {e}")
 
-    def start_processing(self):
-        if not self.enabled:
-            print("Violation detection is disabled. No configuration found.")
-            return
-            
-        pubsub = self.redis_client.pubsub()
-        pubsub.subscribe(self.detection_channel)
-        
-        print(f"Started violation detection for camera {self.camera_id}")
-        print(f"Listening on Redis channel: {self.detection_channel}")
-        
-        try:
-            for message in pubsub.listen():
-                if message['type'] == 'message':
-                    result = self.process_detection(message['data'])
-                    if result is False:
-                        break
-        except KeyboardInterrupt:
-            print("Violation detection interrupted by user")
-        except Exception as e:
-            print(f"Error in violation detection: {e}")
-        finally:
-            pubsub.unsubscribe()
-            print("Violation detection stopped")
-
     def close(self):
         try:
             self.cassandra_cluster.shutdown()
         except:
             pass
         print("Connections closed")
-
-
-def main():
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Enhanced traffic violation detection")
-    parser.add_argument("--camera", type=str, default="cam4", help="Camera ID to monitor")
-    parser.add_argument("--redis-host", type=str, default="localhost", help="Redis host")
-    parser.add_argument("--redis-port", type=int, default=6379, help="Redis port")
-    parser.add_argument("--minio-endpoint", type=str, default="localhost:9000", help="MinIO endpoint")
-    parser.add_argument("--cassandra-host", type=str, default="localhost", help="Cassandra host")
-    
-    args = parser.parse_args()
-    
-    detector = EnhancedViolationDetector(
-        camera_id=args.camera,
-        redis_host=args.redis_host,
-        redis_port=args.redis_port,
-        minio_endpoint=args.minio_endpoint,
-        cassandra_host=args.cassandra_host
-    )
-    
-    try:
-        detector.start_processing()
-    except KeyboardInterrupt:
-        print("Violation detection interrupted")
-    finally:
-        detector.close()
-
-
-if __name__ == "__main__":
-    main()
