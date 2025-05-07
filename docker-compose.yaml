@@ -100,7 +100,17 @@ services:
       CASSANDRA_RACK: rack1
       CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
     # volumes:
-    #   - ./database-docker/cassandra-data:/var/lib/cassandra
+    # #   - ./database-docker/cassandra-data:/var/lib/cassandra
+    #   - ./database_init/cassandra_schema.cql:/cassandra_schema.cql
+    #   - ./database_init/init_cassandra.sh:/init_cassandra.sh
+    # entrypoint: ["/bin/bash", "/init_cassandra.sh"]
+  cassandra-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.cassandra-init
+    depends_on:
+      - cassandra
+    restart: "no"
 
   # MinIO (object storage)
   minio:
@@ -117,8 +127,8 @@ services:
       - ./database-docker/minio-data:/data
   
   triton-cpu:
-    # image: nvcr.io/nvidia/tritonserver:24.09-py3
-    image: custom-triton:24.09-py3
+    image: nvcr.io/nvidia/tritonserver:24.09-py3
+    # image: custom-triton:24.09-py3
     container_name: triton_server
     command: tritonserver --model-repository=/models
     volumes:
@@ -170,7 +180,7 @@ services:
 volumes:
   minio-data:
   models:
-  redis_data:
+  # redis_data:
 
 networks:
   stream_net:

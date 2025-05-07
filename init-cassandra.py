@@ -19,7 +19,7 @@ def wait_for_cassandra(host, port=9042, timeout=60):
 
 def create_traffic_system_schema():
     # Cassandra Docker thường chạy ở localhost, port 9042
-    cassandra_host = 'localhost'
+    cassandra_host = 'cassandra'
     
     print(f"Đang kết nối với Cassandra tại {cassandra_host}:9042...")
     
