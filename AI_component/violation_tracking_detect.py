@@ -1,31 +1,23 @@
 import cv2
-import imageio
 import numpy as np
 import json
 import time
 from collections import defaultdict, deque
 import uuid
 import io
-import base64
-from datetime import datetime
-import redis
-from cassandra.cluster import Cluster
-from cassandra.query import SimpleStatement
-import minio
-import tempfile
-import os
-from supervision import Detections
-from bytetrack.byte_track import ByteTrack
-
+import re
+import tritonclient.grpc as triton_grpc
+from license_plate_module import postprocess, preprocess_frame, process_license_plate, is_box_inside, triton_infer
 
 class ViolationHandler:
     """Base class for handling specific violation types"""
-    def __init__(self, config, camera_id):
+    def __init__(self, config, camera_id, triton_server_url="localhost:8001"):
         self.config = config
         self.camera_id = camera_id
         self.roi = self.create_polygon(config.get('roi', {}))
         self.traffic_light_zone = self.create_polygon(config.get('violation_config', [{}])[0].get('traffic_light_zone', {}))
         self.violation_type = config.get('violation_type', 'unknown')
+        self.triton_client = triton_grpc.InferenceServerClient(url=triton_server_url)
         
         # Initialize lane marking for line-crossing violations
         lane_marking = config.get('violation_config', [{}])[0].get('lane_marking', {})
@@ -85,19 +77,198 @@ class ViolationHandler:
     def detect(self, frame, tracked_detections, traffic_light_state, data_deque):
         """Base method to detect violation - to be overridden"""
         return None
+    
+    def detect_license_plate(self, frame, vehicle_box, track_id):
+        """
+        Enhanced license plate detection and recognition function
+        
+        Args:
+            frame: Full camera frame
+            vehicle_box: Bounding box of the vehicle (x1, y1, x2, y2)
+            track_id: Tracking ID of the vehicle
+            
+        Returns:
+            tuple: (license_plate_text, confidence_score, annotated_plate_image)
+        """
+        x1, y1, x2, y2 = vehicle_box
+        
+        # Step 1: Crop the vehicle from the frame
+        vehicle_crop = frame[int(y1):int(y2), int(x1):int(x2)]
+        if vehicle_crop.size == 0:
+            return "unknown", 0.0, None
+        
+        try:
+            # Step 2: Preprocess the vehicle crop for plate detection
+            _, _, frame_normalized, original_size = preprocess_frame(vehicle_crop)
+            
+            # Step 3: Run plate detection using Triton
+            plate_output = triton_infer(self.triton_client, "plate_detection", frame_normalized)
+            if plate_output is None:
+                return "unknown", 0.0, None
+            
+            # Step 4: Postprocess plate detection results
+            num_detections, plate_boxes, plate_scores, plate_class_ids = postprocess(
+                plate_output, original_size, score_threshold=0.35
+            )
+            
+            if num_detections == 0 or len(plate_boxes) == 0:
+                return "unknown", 0.0, None
+                
+            # Step 5: Process each potential license plate and select the best one
+            license_plate_text = "unknown"
+            annotated_plate = None
+            best_conf_score = 0.0
+            
+            for plate_idx, (plate_box, plate_score) in enumerate(zip(plate_boxes, plate_scores)):
+                # Skip low confidence plates
+                if plate_score < 0.5:
+                    continue
+                    
+                px1, py1, px2, py2 = plate_box
+                
+                # Ensure plate coordinates are within vehicle crop boundaries
+                px1 = max(0, min(px1, vehicle_crop.shape[1]-1))
+                py1 = max(0, min(py1, vehicle_crop.shape[0]-1))
+                px2 = max(0, min(px2, vehicle_crop.shape[1]-1))
+                py2 = max(0, min(py2, vehicle_crop.shape[0]-1))
+                
+                # Skip if plate dimensions are too small
+                if (px2 - px1 < 10) or (py2 - py1 < 5):
+                    continue
+                    
+                # Crop the license plate
+                plate_crop = vehicle_crop[int(py1):int(py2), int(px1):int(px2)]
+                if plate_crop.size == 0:
+                    continue
+                    
+                # Process license plate to extract text
+                lp_text, char_result, processed_plate = process_license_plate(
+                    self.triton_client, plate_crop
+                )
+                
+                # Calculate confidence score
+                if lp_text != "unknown" and char_result and "scores" in char_result:
+                    conf_scores = char_result["scores"]
+                    if len(conf_scores) > 0:
+                        total_conf_score = conf_scores.sum() / len(conf_scores)
+                        
+                        # Filter out extremely short license plates (likely errors)
+                        if len(lp_text) >= 4 and total_conf_score > best_conf_score:
+                            best_conf_score = total_conf_score
+                            license_plate_text = lp_text
+                            annotated_plate = processed_plate
+                            
+                            # Draw the plate location on the vehicle crop for visualization
+                            cv2.rectangle(
+                                vehicle_crop,
+                                (int(px1), int(py1)),
+                                (int(px2), int(py2)),
+                                color=(0, 255, 0),  # Green
+                                thickness=2
+                            )
+            
+            # Step 6: Validate license plate format using regex (customize for your region)
+            if license_plate_text != "unknown" and self.validate_license_plate_format(license_plate_text):
+                # Store in vehicle tracking history for consistency
+                if track_id in self.license_plate_history:
+                    # Update the history with the most confident detection
+                    history = self.license_plate_history[track_id]
+                    if best_conf_score > history["best_confidence"]:
+                        history["plates"][license_plate_text] = history["plates"].get(license_plate_text, 0) + 1
+                        history["best_confidence"] = best_conf_score
+                        history["best_plate"] = license_plate_text
+                else:
+                    # Create new history entry
+                    self.license_plate_history[track_id] = {
+                        "plates": {license_plate_text: 1},
+                        "best_confidence": best_conf_score,
+                        "best_plate": license_plate_text,
+                        "frames_tracked": 1
+                    }
+                
+                # Use the most consistent plate detection over time
+                if track_id in self.license_plate_history:
+                    history = self.license_plate_history[track_id]
+                    if history["frames_tracked"] > 5:  # Require multiple detections for stability
+                        # Find the most common plate in history
+                        most_common_plate = max(
+                            history["plates"].items(), 
+                            key=lambda x: x[1]
+                        )[0]
+                        license_plate_text = most_common_plate
+            
+            return license_plate_text, best_conf_score, annotated_plate
+        
+        except Exception as e:
+            print(f"Error in license plate detection: {str(e)}")
+            return "unknown", 0.0, None
+        
+    def validate_license_plate_format(self, plate_text):
+        """
+        Validate license plate format using regular expressions
+        Customize this method based on your region's plate format
+        
+        Args:
+            plate_text: Detected license plate text
+            
+        Returns:
+            bool: True if the format is valid, False otherwise
+        """
+        # Example for Vietnamese license plates (customize as needed)
+        # Common formats: 
+        # - 59A-123.45 (old format)
+        # - 59F-123.45 (new format for cars)
+        # - 59K1-123.45 (motorcycles)
+        
+        # Basic pattern - adjust for your specific region
+        # This is an example pattern that accepts formats like:
+        # - 2 digits + 1-2 letters + (optional dash) + 5-6 digits (with optional dot)
+        pattern = r'^\d{2}[A-Z]{1,2}[-]?\d{3}[.]?\d{2}$'
+        
+        return bool(re.match(pattern, plate_text))
 
 class TrafficLightViolationHandler(ViolationHandler):
-    """Handler for traffic light violations"""
+    """Enhanced handler for traffic light violations with improved license plate detection"""
+    def __init__(self, config, camera_id, triton_server_url="localhost:8001"):
+        super().__init__(config, camera_id, triton_server_url)
+        # License plate tracking history
+        self.license_plate_history = {}
+        # Minimum confidence threshold for license plate detection
+        self.license_plate_confidence_threshold = 0.6
+        
     def detect(self, frame, tracked_detections, traffic_light_state, data_deque):
+        """
+        Detect traffic light violations
+        
+        Args:
+            frame: Current video frame
+            tracked_detections: Object tracking results
+            traffic_light_state: Current traffic light state ('red', 'yellow', 'green')
+            data_deque: History of tracked object positions
+            
+        Returns:
+            list: List of detected violations
+        """
+        # Only detect violations during red light
         if traffic_light_state != 'red':
             return []
         
+        # Define color map for visualization
+        color_map = {
+            'red': (0, 0, 255),
+            'yellow': (0, 255, 255),
+            'green': (0, 255, 0)
+        }
+        
         violations = []
+        frame_violation = frame.copy()
         
         # Iterate through tracked objects
         for i in range(len(tracked_detections.xyxy)):
             cls = tracked_detections.class_id[i]
-            if cls not in [2, 3, 5, 7]:  # Vehicles
+            
+            # Skip if not a vehicle class (customize based on your model)
+            if cls not in [2, 3, 5, 7]:  # Common vehicle classes in COCO
                 continue
 
             # Get bounding box
@@ -106,30 +277,48 @@ class TrafficLightViolationHandler(ViolationHandler):
             center_y = (y1 + y2) / 2
             track_id = tracked_detections.tracker_id[i]
             
+            # Update tracking history
+            if track_id in self.license_plate_history:
+                self.license_plate_history[track_id]["frames_tracked"] += 1
+            
+            # Check for line crossing violation
             if track_id in data_deque and len(data_deque[track_id]) >= 2:
                 # Get current and previous positions
                 curr_pos = data_deque[track_id][0]
                 prev_pos = data_deque[track_id][1]
                 
-                # Check direction and intersection with line
+                # Check direction and intersection with lane marking line
                 direction = self.get_direction(curr_pos, prev_pos)
                 
                 if self.intersect(
                     curr_pos, prev_pos, 
                     self.lane_marking_start, self.lane_marking_end
                 ):
-                    if "North" in direction:  # Customize this based on your specific violation criteria
+                    # Check if movement direction matches violation criteria
+                    # Customize based on your camera setup (North, South, East, West)
+                    if "North" in direction:
+                        # Vehicle is crossing the line in the monitored direction during red light
+                        
+                        # Get vehicle bounding box
+                        vehicle_box = (x1, y1, x2, y2)
+                        
+                        # Detect license plate
+                        license_plate_text, confidence, annotated_plate = self.detect_license_plate(
+                            frame, vehicle_box, track_id
+                        )
+                        
                         # Draw bounding box on the frame
                         cv2.rectangle(
-                            frame,
+                            frame_violation,
                             (int(x1), int(y1)),
                             (int(x2), int(y2)),
                             color=(0, 0, 255),  # Red color in BGR
                             thickness=2
                         )
-                        # Optionally add track ID as text
+                        
+                        # Add track ID as text
                         cv2.putText(
-                            frame,
+                            frame_violation,
                             f"ID: {track_id}",
                             (int(x1), int(y1) - 10),
                             cv2.FONT_HERSHEY_SIMPLEX,
@@ -137,18 +326,83 @@ class TrafficLightViolationHandler(ViolationHandler):
                             (0, 0, 255),  # Red color
                             2
                         )
-
-                        # Append violation with annotated frame
+                        
+                        # Add license plate info
+                        if license_plate_text != "unknown":
+                            cv2.putText(
+                                frame_violation,
+                                f"LP: {license_plate_text} ({confidence:.2f})",
+                                (int(x1), int(y1) - 30),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.6,
+                                (0, 0, 255),  # Red color
+                                2
+                            )
+                        
+                        # Display traffic light status
+                        status_color = color_map.get(traffic_light_state, (255, 255, 255))
+                        
+                        # Status display location (top right corner)
+                        box_top_right = (frame.shape[1] - 200, 20)
+                        box_bottom_right = (frame.shape[1] - 170, 50)
+                        
+                        # Draw colored box to indicate light status
+                        cv2.rectangle(
+                            frame_violation,
+                            box_top_right,
+                            box_bottom_right,
+                            status_color,
+                            thickness=-1  # Filled rectangle
+                        )
+                        
+                        # Add text label
+                        cv2.putText(
+                            frame_violation,
+                            f"Traffic Light: {traffic_light_state.upper()}",
+                            (box_bottom_right[0] + 10, box_bottom_right[1] - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            status_color,
+                            2
+                        )
+                        
+                        # Generate unique violation ID
+                        violation_id = str(uuid.uuid4())
+                        
+                        # Create violation record
                         violations.append({
-                            'track_id': track_id,
+                            'violation_id': violation_id,
                             'center': (center_x, center_y),
                             'box': (x1, y1, x2, y2),
-                            'frame': frame.copy(),  # Include annotated frame
-                            'timestamp': time.time()
+                            'frame': frame_violation,
+                            'license_plate': license_plate_text,
+                            'license_plate_confidence': confidence,
+                            'violation_timestamp': time.time(),
+                            'violation_type': 'traffic_light_violation',
+                            'traffic_light_state': traffic_light_state,
+                            'vehicle_direction': direction,
+                            'camera_id': self.camera_id
                         })
+                        
+                        # If we have a license plate with good confidence, include the annotated plate image
+                        if license_plate_text != "unknown" and confidence > self.license_plate_confidence_threshold and annotated_plate is not None:
+                            violations[-1]['license_plate_image'] = annotated_plate
 
         return violations
-
+    
+    def cleanup_tracking_history(self):
+        """Remove old tracking records to prevent memory leaks"""
+        current_time = time.time()
+        old_tracks = []
+        
+        for track_id, history in self.license_plate_history.items():
+            # Remove tracks not seen in the last 60 seconds
+            if "last_seen" in history and (current_time - history["last_seen"]) > 60:
+                old_tracks.append(track_id)
+        
+        # Remove old tracks
+        for track_id in old_tracks:
+            del self.license_plate_history[track_id]
 
 class LineCrossingViolationHandler(ViolationHandler):
     """Handler for line crossing violations"""
@@ -161,8 +415,6 @@ class LineCrossingViolationHandler(ViolationHandler):
         # Check for lane-crossing violations
         for i in range(len(tracked_detections.xyxy)):
             cls = tracked_detections.class_id[i]
-            if cls not in [2, 3, 5, 7]:  # Not a vehicle
-                continue
                 
             track_id = tracked_detections.tracker_id[i]
             x1, y1, x2, y2 = tracked_detections.xyxy[i]
@@ -193,7 +445,6 @@ class LineCrossingViolationHandler(ViolationHandler):
         
         return violations
 
-
 class WrongWayViolationHandler(ViolationHandler):
     """Handler for wrong way violations"""
     def detect(self, frame, tracked_detections, traffic_light_state, data_deque):
@@ -201,14 +452,11 @@ class WrongWayViolationHandler(ViolationHandler):
 
         for i in range(len(tracked_detections.xyxy)):
             cls = tracked_detections.class_id[i]
-            if cls not in [2, 3, 5, 7]:  # Not a vehicle
-                continue
                 
             track_id = tracked_detections.tracker_id[i]
             x1, y1, x2, y2 = tracked_detections.xyxy[i]
             center_x = (x1 + x2) / 2
             center_y = (y1 + y2) / 2
-            
             if self.is_point_in_polygon((center_x, center_y), self.roi):
                 # Check movement direction if track history exists
                 if track_id in data_deque and len(data_deque[track_id]) >= 2:
@@ -231,408 +479,3 @@ class WrongWayViolationHandler(ViolationHandler):
                         })
 
         return violations
-
-
-class EnhancedViolationDetector:
-    def __init__(self, camera_id, redis_host='localhost', redis_port=6379, 
-                 minio_endpoint='localhost:9000', cassandra_host='localhost'):
-        self.camera_id = camera_id
-        self.redis_client = redis.Redis(host=redis_host, port=redis_port, db=0)
-        self.minio_client = minio.Minio(
-            minio_endpoint,
-            access_key="minioadmin",
-            secret_key="minioadmin",
-            secure=False
-        )
-        self.cassandra_cluster = Cluster([cassandra_host])
-        self.cassandra_session = self.cassandra_cluster.connect('traffic_system')
-        
-        self.ensure_minio_buckets()
-        self.configs = self.load_configs_from_minio()
-        
-        if not self.configs:
-            print(f"No configurations found for camera {camera_id}. Violation detection disabled.")
-            self.enabled = False
-            return
-            
-        self.enabled = True
-        print(f"Configurations loaded for camera {camera_id}. Violation detection enabled.")
-        
-        self.detection_channel = f'inferences_{camera_id}'
-        self.track_history = defaultdict(lambda: deque(maxlen=40))
-        self.data_deque = defaultdict(lambda: deque(maxlen=64))
-        self.frame_buffer = deque(maxlen=120)  # 4 seconds at 30 fps
-        self.traffic_light_state = 'unknown'
-        self.active_violations = defaultdict(dict)
-        self.processed_frames = 0
-        
-        # Initialize ByteTrack
-        self.tracker = ByteTrack(
-            track_activation_threshold=0.6,   # High-confidence threshold
-            lost_track_buffer=30,            # Keep tracks for 30 frames
-            minimum_matching_threshold=0.8,   # IoU threshold for matching tracks
-            frame_rate=10                     # Assumed frame rate
-        )
-        
-        self.violation_handlers = self.initialize_violation_handlers()
-
-    def ensure_minio_buckets(self):
-        required_buckets = ['violation-configs', 'violation-videos', 'violation-images']
-        for bucket in required_buckets:
-            try:
-                if not self.minio_client.bucket_exists(bucket):
-                    self.minio_client.make_bucket(bucket)
-                    print(f"Created bucket: {bucket}")
-            except Exception as e:
-                print(f"Error creating bucket {bucket}: {e}")
-
-    def load_configs_from_minio(self):
-        configs = []
-        try:
-            objects = self.minio_client.list_objects('violation-configs', prefix=f"{self.camera_id}_")
-            for obj in objects:
-                response = self.minio_client.get_object('violation-configs', obj.object_name)
-                config_data = response.read().decode('utf-8')
-                config = json.loads(config_data)
-                configs.append(config)
-        except Exception as e:
-            print(f"Error loading configs from MinIO: {e}")
-        return configs
-
-    def initialize_violation_handlers(self):
-        handlers = {}
-        for config in self.configs:
-            violation_type = config.get('violation_type')
-            if violation_type == 'traffic_light':
-                handlers[violation_type] = TrafficLightViolationHandler(config, self.camera_id)
-            elif violation_type == 'line_crossing':
-                handlers[violation_type] = LineCrossingViolationHandler(config, self.camera_id)
-            elif violation_type == 'wrong_way':
-                handlers[violation_type] = WrongWayViolationHandler(config, self.camera_id)
-        return handlers
-
-    def detect_traffic_light_color(self, frame):
-        if not self.enabled:
-            return 'unknown'
-            
-        traffic_light_handler = self.violation_handlers.get('traffic_light')
-        if not traffic_light_handler:
-            return 'unknown'
-            
-        traffic_light_poly = traffic_light_handler.traffic_light_zone
-        if traffic_light_poly.size == 0:
-            return 'unknown'
-            
-        x, y, w, h = cv2.boundingRect(traffic_light_poly.astype(np.int32))
-        x, y, w, h = max(0, x), max(0, y), min(w, frame.shape[1] - x), min(h, frame.shape[0] - y)
-        
-        traffic_light_region = frame[y:y+h, x:x+w]
-        if traffic_light_region.size == 0:
-            return 'unknown'
-        
-        hsv = cv2.cvtColor(traffic_light_region, cv2.COLOR_BGR2HSV)
-        
-        lower_red1 = np.array([0, 150, 70])
-        upper_red1 = np.array([5, 255, 255])
-        lower_red2 = np.array([175, 150, 70])
-        upper_red2 = np.array([180, 255, 255])
-        lower_yellow = np.array([10, 100, 100])
-        upper_yellow = np.array([35, 255, 255])
-        lower_green = np.array([40, 50, 50])
-        upper_green = np.array([90, 255, 255])
-        
-        mask_red1 = cv2.inRange(hsv, lower_red1, upper_red1)
-        mask_red2 = cv2.inRange(hsv, lower_red2, upper_red2)
-        mask_red = cv2.bitwise_or(mask_red1, mask_red2)
-        mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
-        mask_green = cv2.inRange(hsv, lower_green, upper_green)
-        
-        red_count = cv2.countNonZero(mask_red)
-        yellow_count = cv2.countNonZero(mask_yellow)
-        green_count = cv2.countNonZero(mask_green)
-        
-        max_count = max(red_count, yellow_count, green_count)
-        if max_count < 50:
-            return 'unknown'
-            
-        if max_count == red_count:
-            return 'red'
-        elif max_count == yellow_count:
-            return 'yellow'
-        else:
-            return 'green'
-
-    def convert_to_supervision_detections(self, detection_data):
-        """Convert detection data to Supervision Detections format for ByteTrack"""
-
-        boxes = []
-        scores = []
-        class_ids = []
-        
-        for det in detection_data.get('detections', []):
-            x, y, w, h = det.get('box', [0, 0, 0, 0])
-            x1, y1, x2, y2 = int(x - w/2), int(y - h/2), int(x + w/2), int(y + h/2)
-            boxes.append([x1, y1, x2, y2])
-            scores.append(det.get('score', 0.0))
-            class_ids.append(det.get('class_id', 0))
-            
-        if not boxes:
-            return None
-                    
-        return Detections(
-            xyxy=np.array(boxes),
-            confidence=np.array(scores),
-            class_id=np.array(class_ids)
-        )
-
-    def process_detection(self, detection_data):
-        if not self.enabled or not detection_data:
-            return
-            
-        try:
-            detection = json.loads(detection_data)
-            frame_index = detection['frame_index']
-            metadata = detection['metadata']
-            frame_base64 = detection.get('frame_data')
-            self.processed_frames += 1
-                
-            if frame_base64:
-                frame_data = base64.b64decode(frame_base64)
-                frame_array = np.frombuffer(frame_data, dtype=np.uint8)
-                frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
-                if frame is None:
-                    print(f"Failed to decode frame {frame_index}")
-                    return
-            else:
-                print(f"No frame data for frame {frame_index}")
-                return
-                
-            timestamp = metadata.get('timestamp', time.time())
-            self.frame_buffer.append((frame, frame_index, timestamp))
-            
-            # Detect traffic light state
-            self.traffic_light_state = self.detect_traffic_light_color(frame)
-            
-            # Convert detections to Supervision Detections format
-            detections = self.convert_to_supervision_detections(detection)
-            if detections is None:
-                print(f"No detections in frame {frame_index}")
-                return True
-                
-            # Update tracker with new detections
-            tracked_detections = self.tracker.update_with_detections(detections)
-            
-            # Update tracking history for line crossing detection
-            for i in range(len(tracked_detections.tracker_id)):
-                track_id = tracked_detections.tracker_id[i]
-                box = tracked_detections.xyxy[i]
-                
-                # Calculate center point
-                center_x = (box[0] + box[2]) / 2
-                center_y = (box[3] + box[3]) / 2
-                
-                # Store point for path tracking
-                self.data_deque[track_id].appendleft((center_x, center_y))
-                
-                # Store detailed position history
-                self.track_history[track_id].append((
-                    center_x, center_y, frame_index, timestamp
-                ))
-            
-            # Process violations for each handler
-            for violation_type, handler in self.violation_handlers.items():
-                violations = handler.detect(frame, tracked_detections, self.traffic_light_state, self.data_deque)
-                if violations:
-                    for violation in violations:
-                        track_id = violation['track_id']
-                        if track_id not in self.active_violations[violation_type]:
-                            violation_id = str(uuid.uuid4())
-                            self.active_violations[violation_type][track_id] = {
-                                'violation_id': violation_id,
-                                'violation_type': violation_type,
-                                'start_frame': frame_index,
-                                'start_time': timestamp,
-                                'end_frame': frame_index,
-                                'end_time': timestamp,
-                                'license_plate': '',
-                                'frames': [],
-                                'track_id': track_id,
-                                'processed': False
-                            }
-                            print(f"New {violation_type} violation detected: ID {violation_id}, Track {track_id}")
-                        
-                        violation_data = self.active_violations[violation_type][track_id]
-                        violation_data['end_frame'] = frame_index
-                        violation_data['end_time'] = timestamp
-                        violation_data['frames'].append((frame.copy(), frame_index, timestamp))
-            
-            # Process completed violations
-            self.process_completed_violations(frame_index, timestamp)
-            return True
-            
-        except Exception as e:
-            print(f"Error processing detection: {e}")
-            import traceback
-            traceback.print_exc()
-            return True
-
-    def process_completed_violations(self, current_frame, current_time):
-        completed_violations = []
-        for violation_type, violations in list(self.active_violations.items()):
-            for track_id, violation in list(violations.items()):
-                if current_frame - violation['end_frame'] > 15:
-                    violation['processed'] = True
-                    # Collect frames for 4-second video (±2 seconds around violation)
-                    violation_time = violation['start_time']
-                    frames_for_video = []
-                    for frame, frame_index, timestamp in self.frame_buffer:
-                        if abs(timestamp - violation_time) <= 4.0:  # Within ±2 seconds
-                            frames_for_video.append((frame.copy(), frame_index, timestamp))
-                    violation['frames_for_video'] = sorted(frames_for_video, key=lambda x: x[2])  # Sort by timestamp
-                    completed_violations.append((violation_type, track_id, violation))
-        
-        for violation_type, track_id, violation in completed_violations:
-            try:
-                self.save_violation_evidence(violation)
-                del self.active_violations[violation_type][track_id]
-                if not self.active_violations[violation_type]:
-                    del self.active_violations[violation_type]
-            except Exception as e:
-                print(f"Error processing violation {violation['violation_id']}: {e}")
-
-    def save_violation_evidence(self, violation):
-        violation_id = violation['violation_id']
-        violation_time = violation['start_time']
-        violation_type = violation['violation_type']
-        timestamp = datetime.fromtimestamp(violation_time).strftime('%Y%m%d_%H%M%S')
-
-        try:
-            frames_for_video = violation.get('frames_for_video', [])
-            if len(frames_for_video) > 0:
-                first_frame = frames_for_video[0][0]
-                height, width = first_frame.shape[:2]
-                fps = 3  # Assuming 30 fps for 4-second video
-
-                buffer = io.BytesIO()
-    
-                # Write video to buffer using imageio
-                with imageio.get_writer(buffer, format='mp4', fps=fps) as writer:
-                    for frame_data, _, _ in frames_for_video:
-                        writer.append_data(frame_data)
-                
-                # Upload to MinIO
-                buffer.seek(0)
-    
-                video_path = f"{violation_type}/{self.camera_id}/{timestamp}.mp4"
-                self.minio_client.put_object(
-                    'violation-videos',
-                    video_path,
-                    data=buffer,
-                    length=buffer.getbuffer().nbytes,
-                    content_type='video/mp4'
-                )
-
-                # Save image from middle frame
-                middle_idx = len(frames_for_video) // 2
-                violation_image = frames_for_video[middle_idx][0]
-                _, buffer = cv2.imencode('.jpg', violation_image)
-                image_buffer = io.BytesIO(buffer.tobytes())
-                
-                image_path = f"{violation_type}/{self.camera_id}/{timestamp}.jpg"
-                self.minio_client.put_object(
-                    'violation-images',
-                    image_path,
-                    data=image_buffer,
-                    length=len(buffer),
-                    content_type='image/jpeg'
-                )
-
-                # Save metadata to Cassandra
-                violation_date = datetime.fromtimestamp(violation_time).strftime('%Y-%m-%d')
-                query = """
-                INSERT INTO violations 
-                (violation_type, violation_date, violation_time, violation_id, license_plate, 
-                camera_id, processed_time, status, video_evidence_url, image_evidence_url)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """
-                self.cassandra_session.execute(query, (
-                    violation_type,
-                    violation_date,
-                    datetime.fromtimestamp(violation_time),
-                    uuid.UUID(violation_id),
-                    violation.get('license_plate', ''),
-                    self.camera_id,
-                    datetime.now(),
-                    'pending', 
-                    f"minio://violation-videos/{video_path}",
-                    f"minio://violation-images/{image_path}"
-                ))
-
-                print(f"Saved violation {violation_id} evidence to MinIO and Cassandra")
-
-        except Exception as e:
-            print(f"Error saving violation evidence: {e}")
-
-    def start_processing(self):
-        if not self.enabled:
-            print("Violation detection is disabled. No configuration found.")
-            return
-            
-        pubsub = self.redis_client.pubsub()
-        pubsub.subscribe(self.detection_channel)
-        
-        print(f"Started violation detection for camera {self.camera_id}")
-        print(f"Listening on Redis channel: {self.detection_channel}")
-        
-        try:
-            for message in pubsub.listen():
-                if message['type'] == 'message':
-                    result = self.process_detection(message['data'])
-                    if result is False:
-                        break
-        except KeyboardInterrupt:
-            print("Violation detection interrupted by user")
-        except Exception as e:
-            print(f"Error in violation detection: {e}")
-        finally:
-            pubsub.unsubscribe()
-            print("Violation detection stopped")
-
-    def close(self):
-        try:
-            self.cassandra_cluster.shutdown()
-        except:
-            pass
-        print("Connections closed")
-
-
-def main():
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Enhanced traffic violation detection")
-    parser.add_argument("--camera", type=str, default="cam4", help="Camera ID to monitor")
-    parser.add_argument("--redis-host", type=str, default="localhost", help="Redis host")
-    parser.add_argument("--redis-port", type=int, default=6379, help="Redis port")
-    parser.add_argument("--minio-endpoint", type=str, default="localhost:9000", help="MinIO endpoint")
-    parser.add_argument("--cassandra-host", type=str, default="localhost", help="Cassandra host")
-    
-    args = parser.parse_args()
-    
-    detector = EnhancedViolationDetector(
-        camera_id=args.camera,
-        redis_host=args.redis_host,
-        redis_port=args.redis_port,
-        minio_endpoint=args.minio_endpoint,
-        cassandra_host=args.cassandra_host
-    )
-    
-    try:
-        detector.start_processing()
-    except KeyboardInterrupt:
-        print("Violation detection interrupted")
-    finally:
-        detector.close()
-
-
-if __name__ == "__main__":
-    main()
