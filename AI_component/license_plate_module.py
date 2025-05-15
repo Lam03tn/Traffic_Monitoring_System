@@ -1,5 +1,8 @@
+import os
+import time
 import cv2
 import math
+from matplotlib import pyplot as plt
 import numpy as np
 import tritonclient.grpc as triton_grpc
 
@@ -27,6 +30,7 @@ def preprocess_plate_image(image):
         scale = 640 / w
         image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
 
+    # return image
     # Grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -42,7 +46,7 @@ def preprocess_plate_image(image):
 
     # Erode
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    eroded = cv2.erode(thresh, kernel, iterations=1)
+    eroded = cv2.erode(denoised, kernel, iterations=1)
 
     # Find largest contour (license plate)
     contours, _ = cv2.findContours(eroded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -280,7 +284,7 @@ def read_plate(triton_client, plate_crop):
     _, char_input, char_normalized, char_original_size = preprocess_frame(plate_crop)
     
     # Perform inference with Triton
-    char_output = triton_infer(triton_client, "character_recognition", plate_crop)
+    char_output = triton_infer(triton_client, "character_detection", char_normalized)
     if char_output is None:
         return "unknown", None
     
@@ -373,7 +377,10 @@ def process_license_plate(triton_client, vehicle_crop):
     # Try different rotation configurations
     for cc in range(0, 2):
         for ct in range(0, 2):
+            # rotated_plate = deskew(processed_plate, cc, ct)
             rotated_plate = deskew(processed_plate, cc, ct)
+            # rotated_plate = preprocess_plate_image(rotated_plate)
+
             license_plate_text, char_result = read_plate(triton_client, rotated_plate)
             if char_result is not None and len(char_result[1]) > 0:
                 total_conf_score = sum(char_result[1]) / len(char_result[1])

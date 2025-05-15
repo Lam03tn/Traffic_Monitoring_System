@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { getCameraActiveViolations } from '../services/apiServices';
+import { getCameraActiveViolations } from '../services/cameraConfigService';
 import '../css/Violation.css';
 
 const CameraView = ({ camera, videoUrl, streamError, onAddViolation, onRetryConnection, onRefreshViolations }) => {

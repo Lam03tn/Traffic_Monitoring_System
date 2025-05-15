@@ -4,9 +4,10 @@ import CameraView from './components/CameraView';
 import AddViolationModal from './components/AddViolationModal';
 import ViolationsQuery from './components/ViolationsQuery';
 import './App.css';
-import { fetchCameras } from './services/apiServices';
+import { fetchCameras } from './services/cameraConfigService';
 
-const WEBSOCKET_URL = process.env.REACT_APP_WEBSOCKET_URL || 'ws://localhost:8000';
+const WEBSOCKET_URL = process.env.REACT_APP_WEBSOCKET_URL || 'ws://127.0.0.1:8000';
+console.log(WEBSOCKET_URL)
 
 function App() {
   const [cameras, setCameras] = useState([]);
@@ -60,6 +61,15 @@ function App() {
       establishWebSocketConnection(selectedCamera.id);
     }
   }, [selectedCamera]);
+
+  useEffect(() => {
+    if (activeView === 'violations') {
+      cleanupWebSocket();
+      setVideoUrl(null);
+      setSelectedCamera(null);
+      setStreamError(null);
+    }
+  }, [activeView]);
 
   const cleanupWebSocket = () => {
     if (wsRef.current) {

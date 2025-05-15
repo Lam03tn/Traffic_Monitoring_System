@@ -10,9 +10,6 @@ minio_service = MinioService()
 async def create_camera_config(config: ViolationConfigCreate):
     config_dict = config.model_dump()
     config_dict["created_at"] = datetime.now().isoformat()
-    # created_at = datetime.now()
-    # config_dict = config.model_dump()
-    # config_dict["created_at"] = created_at
     
     try:
         file_path = minio_service.create_camera_config(config_dict)

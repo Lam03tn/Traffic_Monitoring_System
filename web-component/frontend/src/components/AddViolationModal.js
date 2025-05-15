@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { saveCameraViolationConfig, getViolationConfig } from '../services/apiServices';
+import { saveCameraViolationConfig, getViolationConfig } from '../services/cameraConfigService';
 
 const AddViolationModal = ({ camera, onClose, videoDimensions, onRefreshViolations }) => {
   const [step, setStep] = useState(1);

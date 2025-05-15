@@ -2,14 +2,17 @@
 from pydantic_settings import BaseSettings
 
 class MinIOSettings(BaseSettings):
-    minio_endpoint: str = "localhost:9000"
+    minio_endpoint: str = "minio:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin"
-    minio_bucket: str = "violation-configs"
+    camera_config_bucket: str = "camera-configs"
+    violation_config_bucket: str = "violation-configs"
+    violation_video_bucket: str = "violation-videos"
+    violation_image_bucket: str = "violation-images"
     minio_secure: bool = False
-    
+
 class CassandraSettings(BaseSettings):
-    cassandra_host: str = "localhost"
+    cassandra_host: str = "cassandra"
     cassandra_keyspace: str = "traffic_system"
     cassandra_port: int = 9042
 

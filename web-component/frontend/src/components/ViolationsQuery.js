@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { fetchViolationsByDate, fetchViolationsByStatus } from '../services/apiServices';
+import { fetchViolationsByDate, fetchViolationsByStatus, updateViolationStatus, fetchViolationVideo, fetchViolationImage } from '../services/violationService';
 import '../css/ViolationsQuery.css';
 
 const ViolationsQuery = () => {
@@ -10,6 +10,14 @@ const ViolationsQuery = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showDetails, setShowDetails] = useState({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const [evidence, setEvidence] = useState({});
+  const [modalOpen, setModalOpen] = useState(false);
+  const [selectedViolationId, setSelectedViolationId] = useState(null);
+  const [evidenceType, setEvidenceType] = useState(null);
+  const [pendingStatusChanges, setPendingStatusChanges] = useState({});
+  const [sortConfig, setSortConfig] = useState({ key: 'violation_time', direction: 'desc' });
+  const violationsPerPage = 10;
 
   const statusOptions = [
     { value: 'pending', label: 'Chờ xử lý' },
@@ -31,6 +39,7 @@ const ViolationsQuery = () => {
     setLoading(true);
     setError(null);
     setViolations([]);
+    setCurrentPage(1);
     
     try {
       let result;
@@ -49,34 +58,147 @@ const ViolationsQuery = () => {
     }
   };
 
-  const toggleDetails = (violationId) => {
+  const fetchEvidence = async (violation) => {
+    try {
+      const date = new Date(violation.violation_time);
+      const timestamp = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}_${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}${String(date.getSeconds()).padStart(2, '0')}`;
+      const camera_id = violation.camera_id;
+      const violation_type = violation.violation_type;
+
+      const videoBlob = await fetchViolationVideo(violation_type, camera_id, timestamp);
+      const imageBlob = await fetchViolationImage(violation_type, camera_id, `${timestamp}_1`);
+      const imageBlobBefore = await fetchViolationImage(violation_type, camera_id, `${timestamp}_2`);
+      
+      let imageBlobPlate = null;
+      try {
+        imageBlobPlate = await fetchViolationImage(violation_type, camera_id, `${timestamp}_3`);
+      } catch (plateErr) {
+        console.warn(`License plate image (${timestamp}_3.jpg) not found for violation ${violation.violation_id}: ${plateErr.message}`);
+      }
+
+      const videoUrl = URL.createObjectURL(videoBlob);
+      const imageUrl = URL.createObjectURL(imageBlob);
+      const imageUrlBefore = URL.createObjectURL(imageBlobBefore);
+      const imageUrlPlate = imageBlobPlate ? URL.createObjectURL(imageBlobPlate) : null;
+
+      setEvidence(prev => ({
+        ...prev,
+        [violation.violation_id]: { 
+          videoUrl, 
+          imageUrl, 
+          imageUrlBefore, 
+          imageUrlPlate 
+        }
+      }));
+    } catch (err) {
+      console.error('Error fetching evidence:', err);
+      setError(err.message || 'Không thể tải bằng chứng vi phạm.');
+    }
+  };
+
+  const toggleDetails = async (violationId) => {
     setShowDetails(prev => ({
       ...prev,
       [violationId]: !prev[violationId]
     }));
   };
 
-  const handleStatusChange = async (violationId, newStatus) => {
-    try {
-      await updateViolationStatus(violationId, newStatus);
-      
-      // Update local state
-      setViolations(violations.map(violation => 
-        violation.id === violationId 
-          ? { ...violation, status: newStatus } 
-          : violation
-      ));
-    } catch (error) {
-      console.error('Error updating violation status:', error);
-      setError('Không thể cập nhật trạng thái vi phạm. Vui lòng thử lại sau.');
+  const openEvidenceModal = (violationId, type) => {
+    setSelectedViolationId(violationId);
+    setEvidenceType(type);
+    setModalOpen(true);
+
+    const violation = violations.find(v => v.violation_id === violationId);
+    if (violation && !evidence[violationId]) {
+      fetchEvidence(violation);
     }
   };
 
-  // Mock function - replace with actual API call
-  const updateViolationStatus = async (violationId, newStatus) => {
-    // In a real implementation, you would call your API here
-    console.log(`Updating violation ${violationId} to status ${newStatus}`);
-    return Promise.resolve();
+  const closeModal = () => {
+    setModalOpen(false);
+    setSelectedViolationId(null);
+    setEvidenceType(null);
+  };
+
+  const handleStatusChange = (violationId, newStatus) => {
+    setPendingStatusChanges(prev => ({
+      ...prev,
+      [violationId]: newStatus
+    }));
+  };
+
+  const saveStatusChange = async (violationId) => {
+    const newStatus = pendingStatusChanges[violationId];
+    if (!newStatus) return;
+
+    try {
+      const violation = violations.find(v => v.violation_id === violationId);
+      if (!violation) throw new Error('Violation not found');
+
+      const payload = {
+        violation: {
+          ...violation,
+          processed_time: violation.processed_time ? new Date(violation.processed_time).toISOString() : null
+        },
+        new_status: newStatus
+      };
+
+      const updatedViolation = await updateViolationStatus(payload);
+
+      setViolations(violations.map(v => 
+        v.violation_id === violationId 
+          ? updatedViolation 
+          : v
+      ));
+      setPendingStatusChanges(prev => {
+        const newChanges = { ...prev };
+        delete newChanges[violationId];
+        return newChanges;
+      });
+    } catch (error) {
+      console.error('Error updating violation status:', error);
+      setError(error.message || 'Không thể cập nhật trạng thái vi phạm. Vui lòng thử lại sau.');
+    }
+  };
+
+  const sortViolations = (key, direction) => {
+    setSortConfig({ key, direction });
+    const sorted = [...violations].sort((a, b) => {
+      if (key === 'violation_time') {
+        const dateA = new Date(a.violation_time);
+        const dateB = new Date(b.violation_time);
+        return direction === 'asc' ? dateA - dateB : dateB - dateA;
+      } else if (key === 'status') {
+        const statusA = statusOptions.find(s => s.value === a.status)?.label || a.status;
+        const statusB = statusOptions.find(s => s.value === b.status)?.label || b.status;
+        return direction === 'asc' 
+          ? statusA.localeCompare(statusB, 'vi-VN') 
+          : statusB.localeCompare(statusA, 'vi-VN');
+      }
+      return 0;
+    });
+    setViolations(sorted);
+  };
+
+  const indexOfLastViolation = currentPage * violationsPerPage;
+  const indexOfFirstViolation = indexOfLastViolation - violationsPerPage;
+  const currentViolations = violations.slice(indexOfFirstViolation, indexOfLastViolation);
+  const totalPages = Math.ceil(violations.length / violationsPerPage);
+
+  const handlePageChange = (pageNumber) => {
+    setCurrentPage(pageNumber);
+  };
+
+  const handlePreviousPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
+
+  const handleNextPage = () => {
+    if (currentPage < totalPages) {
+      setCurrentPage(currentPage + 1);
+    }
   };
 
   return (
@@ -142,16 +264,46 @@ const ViolationsQuery = () => {
           <div className="loading">Đang tải dữ liệu vi phạm...</div>
         ) : violations.length > 0 ? (
           <>
-            <h3>Kết quả truy vấn ({violations.length} vi phạm)</h3>
+            <div className="sort-controls">
+              <button 
+                className={`sort-btn ${sortConfig.key === 'violation_time' && sortConfig.direction === 'asc' ? 'active' : ''}`}
+                onClick={() => sortViolations('violation_time', 'asc')}
+              >
+                Thời gian tăng dần
+              </button>
+              <button 
+                className={`sort-btn ${sortConfig.key === 'violation_time' && sortConfig.direction === 'desc' ? 'active' : ''}`}
+                onClick={() => sortViolations('violation_time', 'desc')}
+              >
+                Thời gian giảm dần
+              </button>
+              <button 
+                className={`sort-btn ${sortConfig.key === 'status' && sortConfig.direction === 'asc' ? 'active' : ''}`}
+                onClick={() => sortViolations('status', 'asc')}
+              >
+                Trạng thái A-Z
+              </button>
+              <button 
+                className={`sort-btn ${sortConfig.key === 'status' && sortConfig.direction === 'desc' ? 'active' : ''}`}
+                onClick={() => sortViolations('status', 'desc')}
+              >
+                Trạng thái Z-A
+              </button>
+            </div>
+            <h3>Kết quả truy vấn ({violations.length}: vi phạm)</h3>
             <div className="violations-list">
-              {violations.map(violation => (
-                <div key={violation.id} className="violation-card">
+              {currentViolations.map(violation => (
+                <div 
+                  key={violation.violation_id} 
+                  className="violation-card" 
+                  data-type={violation.violation_type}
+                >
                   <div className="violation-header">
                     <div className="violation-basic-info">
                       <h4>{violationTypes[violation.violation_type] || violation.violation_type}</h4>
                       <div className="violation-metadata">
-                        <span>Camera: {violation.camera_name}</span>
-                        <span>Thời gian: {new Date(violation.timestamp).toLocaleString('vi-VN')}</span>
+                        <span>Camera: {violation.camera_id}</span>
+                        <span>Thời gian: {new Date(violation.violation_time).toLocaleString('vi-VN')}</span>
                         <span className={`violation-status status-${violation.status}`}>
                           {statusOptions.find(s => s.value === violation.status)?.label || violation.status}
                         </span>
@@ -159,35 +311,26 @@ const ViolationsQuery = () => {
                     </div>
                     <button 
                       className="toggle-details-btn"
-                      onClick={() => toggleDetails(violation.id)}
+                      onClick={() => toggleDetails(violation.violation_id)}
                     >
-                      {showDetails[violation.id] ? 'Thu gọn' : 'Chi tiết'}
+                      {showDetails[violation.violation_id] ? 'Thu gọn' : 'Chi tiết'}
                     </button>
                   </div>
                   
-                  {showDetails[violation.id] && (
+                  {showDetails[violation.violation_id] && (
                     <div className="violation-details">
-                      <div className="violation-image">
-                        {violation.image_url ? (
-                          <img src={violation.image_url} alt={`Vi phạm ${violation.id}`} />
-                        ) : (
-                          <div className="no-image">Không có hình ảnh</div>
-                        )}
-                      </div>
-                      
                       <div className="violation-info">
-                        <p><strong>ID:</strong> {violation.id}</p>
-                        <p><strong>Vị trí:</strong> {violation.location}</p>
+                        <p><strong>ID:</strong> {violation.violation_id}</p>
                         <p><strong>Biển số xe:</strong> {violation.license_plate || 'Chưa xác định'}</p>
-                        <p><strong>Mô tả:</strong> {violation.description || 'Không có mô tả'}</p>
+                        <p><strong>Thời gian xử lý:</strong> {violation.processed_time ? new Date(violation.processed_time).toLocaleString('vi-VN') : 'Chưa xử lý'}</p>
                         
                         <div className="violation-actions">
                           <div className="status-selector">
-                            <label htmlFor={`status-${violation.id}`}>Cập nhật trạng thái:</label>
+                            <label htmlFor={`status-${violation.violation_id}`}>Cập nhật trạng thái:</label>
                             <select 
-                              id={`status-${violation.id}`}
-                              value={violation.status}
-                              onChange={(e) => handleStatusChange(violation.id, e.target.value)}
+                              id={`status-${violation.violation_id}`}
+                              value={pendingStatusChanges[violation.violation_id] || violation.status}
+                              onChange={(e) => handleStatusChange(violation.violation_id, e.target.value)}
                             >
                               {statusOptions.map(option => (
                                 <option key={option.value} value={option.value}>
@@ -195,9 +338,29 @@ const ViolationsQuery = () => {
                                 </option>
                               ))}
                             </select>
+                            <button 
+                              className="save-status-btn"
+                              onClick={() => saveStatusChange(violation.violation_id)}
+                              disabled={!pendingStatusChanges[violation.violation_id]}
+                            >
+                              Lưu
+                            </button>
                           </div>
-                          
                           <button className="export-btn">Xuất báo cáo</button>
+                          <div className="evidence-buttons">
+                            <button 
+                              className="evidence-btn"
+                              onClick={() => openEvidenceModal(violation.violation_id, 'image')}
+                            >
+                              Xem ảnh
+                            </button>
+                            <button 
+                              className="evidence-btn"
+                              onClick={() => openEvidenceModal(violation.violation_id, 'video')}
+                            >
+                              Xem video
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -205,11 +368,91 @@ const ViolationsQuery = () => {
                 </div>
               ))}
             </div>
+
+            {totalPages > 1 && (
+              <div className="pagination">
+                <button
+                  className="pagination-btn"
+                  onClick={handlePreviousPage}
+                  disabled={currentPage === 1}
+                >
+                  Trước
+                </button>
+                {Array.from({ length: totalPages }, (_, index) => index + 1).map(page => (
+                  <button
+                    key={page}
+                    className={`pagination-btn ${currentPage === page ? 'active' : ''}`}
+                    onClick={() => handlePageChange(page)}
+                  >
+                    {page}
+                  </button>
+                ))}
+                <button
+                  className="pagination-btn"
+                  onClick={handleNextPage}
+                  disabled={currentPage === totalPages}
+                >
+                  Sau
+                </button>
+              </div>
+            )}
           </>
         ) : !loading && (
           <div className="no-results">Không tìm thấy vi phạm nào.</div>
         )}
       </div>
+
+      {modalOpen && (
+        <div className="evidence-modal">
+          <div className="modal-content">
+            <button className="close-modal-btn" onClick={closeModal}>Đóng</button>
+            <div className="modal-body">
+              {evidence[selectedViolationId] ? (
+                evidenceType === 'image' ? (
+                  <div className="image-container">
+                    <div className="image-wrapper">
+                      <h4>Ảnh sau vi phạm</h4>
+                      <img 
+                        src={evidence[selectedViolationId].imageUrl} 
+                        alt={`Vi phạm ${selectedViolationId} - Sau`} 
+                        className="modal-image"
+                      />
+                    </div>
+                    <div className="image-wrapper">
+                      <h4>Ảnh trước vi phạm</h4>
+                      <img 
+                        src={evidence[selectedViolationId].imageUrlBefore} 
+                        alt={`Vi phạm ${selectedViolationId} - Trước`} 
+                        className="modal-image"
+                      />
+                    </div>
+                    {evidence[selectedViolationId].imageUrlPlate && (
+                      <div className="image-wrapper">
+                        <h4>Ảnh biển số</h4>
+                        <img 
+                          src={evidence[selectedViolationId].imageUrlPlate} 
+                          alt={`Vi phạm ${selectedViolationId} - Biển số`} 
+                          className="modal-image"
+                        />
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <video 
+                    controls 
+                    src={evidence[selectedViolationId].videoUrl} 
+                    className="modal-video"
+                  >
+                    Trình duyệt của bạn không hỗ trợ video.
+                  </video>
+                )
+              ) : (
+                <div className="loading-evidence">Đang tải {evidenceType === 'image' ? 'hình ảnh' : 'video'}...</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,0 +1,8 @@
+fastapi==0.115.12
+minio==7.2.15
+pydantic==2.11.3
+pydantic-settings==2.8.1
+kafka-python==2.0.5
+cassandra-driver==3.29.2
+uvicorn==0.34.0
+uvicorn[standard]

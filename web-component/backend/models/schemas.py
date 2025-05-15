@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
+from uuid import UUID
 
 class Point(BaseModel):
     x: float
@@ -38,12 +39,12 @@ class ViolationConfigResponse(ViolationConfigCreate):
 class VideoInfo(BaseModel):
     camera_id: str
     timestamp: datetime
-    video_id: str
+    video_id: UUID
     video_url: str
     inferences: dict  # or List[dict] depending on your data structure
 
 class ViolationInfo(BaseModel):
-    violation_id: str
+    violation_id: UUID
     violation_type: str
     violation_date: str
     violation_time: datetime
@@ -51,3 +52,9 @@ class ViolationInfo(BaseModel):
     camera_id: str
     processed_time: datetime
     status: str
+    video_evidence_url: str
+    image_evidence_url: str
+
+class UpdateViolationStatus(BaseModel):
+    violation: ViolationInfo
+    new_status: str

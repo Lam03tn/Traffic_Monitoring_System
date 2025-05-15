@@ -9,7 +9,6 @@ from typing import Optional
 from typing import Dict, Set, List, Optional
 
 KAFKA_BOOTSTRAP_SERVERS = ['localhost:29092']
-GROUP_ID = 'video_metadata_consumer_group'
 SEGMENT_TIMEOUT_SECONDS = 60
 
 class ConnectionManager:
@@ -22,7 +21,6 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket, camera_id: str):
         await websocket.accept()
         self.active_connections[websocket] = camera_id
-        print(f"[+] New client connected to camera {camera_id}")
 
         # Start consumer if not already running for this camera
         if camera_id not in self.consumer_tasks or self.consumer_tasks[camera_id].done():
@@ -40,9 +38,7 @@ class ConnectionManager:
                 await websocket.close()
             except Exception:
                 pass
-            
-            print(f"[-] Client disconnected from camera {camera_id}")
-            
+                        
             # Clean up if no more connections for this camera
             await self._cleanup_if_no_connections(camera_id)
 
@@ -51,14 +47,11 @@ class ConnectionManager:
         if websocket not in self.active_connections:
             return False
 
-        print(f"[+] Switching camera from {old_camera_id} to {new_camera_id}")
-
         # Update the connection mapping
         self.active_connections[websocket] = new_camera_id
 
         # Explicitly clean up old camera resources
         if old_camera_id != new_camera_id:  # Only cleanup if switching to a different camera
-            print(f"[+] Forcing cleanup for camera {old_camera_id}")
             if old_camera_id in self.consumer_tasks:
                 self.consumer_tasks[old_camera_id].cancel()
                 try:
@@ -89,7 +82,6 @@ class ConnectionManager:
     async def _cleanup_if_no_connections(self, camera_id: str):
         """Clean up resources for a camera if no clients are connected to it"""
         if not any(cid == camera_id for cid in self.active_connections.values()):
-            print(f"[+] Cleaning up resources for camera {camera_id}")
             if camera_id in self.consumer_tasks:
                 self.consumer_tasks[camera_id].cancel()
                 try:
@@ -110,7 +102,6 @@ class ConnectionManager:
 
     async def send_frame(self, websocket: WebSocket, frame_data: bytes, timestamp: str, camera_id: str):
         if websocket not in self.active_connections or self.active_connections[websocket] != camera_id:
-            print(f"[DEBUG] Skipping frame for camera {camera_id} as WebSocket is not subscribed to it")
             return
             
         encoded_frame = base64.b64encode(frame_data).decode('utf-8')
@@ -122,7 +113,6 @@ class ConnectionManager:
         }
 
         try:
-            print(f"[DEBUG] Sending frame for camera {camera_id}, size {len(frame_data)} bytes")
             await websocket.send_json(message)
         except Exception as e:
             print(f"[!] Error sending frame: {e}")
@@ -130,14 +120,12 @@ class ConnectionManager:
 
     async def run_camera_consumer(self, camera_id: str):
         topic_video = f'video-{camera_id}-raw'
-        print(f"[+] Starting consumer for camera {camera_id}")
         
         try:
             consumer = KafkaConsumer(
                 topic_video,
                 bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
                 auto_offset_reset='latest',
-                # group_id=f"{GROUP_ID}-{camera_id}-{int(time.time())}",  # Unique group_id mỗi lần khởi tạo
                 enable_auto_commit=False,  # Tắt auto-commit để tránh lưu offset cũ
                 value_deserializer=lambda v: v,
                 key_deserializer=lambda k: k.decode('utf-8') if k else None,
@@ -156,14 +144,12 @@ class ConnectionManager:
                 while camera_id in self.consumer_tasks:  # Keep running while task exists
                     # Check if there are any active connections for this camera
                     if not any(cid == camera_id for cid in self.active_connections.values()):
-                        print(f"[DEBUG] No active connections for camera {camera_id}, stopping consumer")
                         break
                     
                     raw_msgs = consumer.poll(timeout_ms=100)
                     
                     for tp, messages in raw_msgs.items():
                         for msg in messages:
-                            print(f"[DEBUG] Received message for camera {camera_id}, segment {msg.key}, size {len(msg.value)} bytes")
                             segment_id = msg.key
                             await self.video_processors[camera_id].process_message(segment_id, msg.value)
                     
@@ -209,7 +195,6 @@ class VideoProcessor:
         """Returns and clears the complete segments buffer"""
         # Only return segments if there are active connections for this camera
         if not any(cid == self.camera_id for cid in self.connection_manager.active_connections.values()):
-            print(f"[DEBUG] No active connections for camera {self.camera_id}, discarding segments")
             self.complete_segments.clear()
             return {}
         segments = self.complete_segments.copy()
@@ -226,7 +211,6 @@ class VideoProcessor:
     async def process_message(self, segment_id: str, value: bytes):
         # Skip processing if no active connections for this camera
         if not any(cid == self.camera_id for cid in self.connection_manager.active_connections.values()):
-            print(f"[DEBUG] No active connections for camera {self.camera_id}, skipping message processing for segment {segment_id}")
             return
 
         now = time.time()
@@ -262,7 +246,6 @@ class VideoProcessor:
                     await self.assemble_segment(segment_id, self.expected_chunks)
 
             self.last_update = now
-            print(f"[DEBUG] Processing chunk {header['chunk_index']} for segment {segment_id}, is_last={header['is_last_chunk']}")
         except Exception as e:
             print(f"[!] Error processing message for camera {self.camera_id}, segment {segment_id}: {e}")
 
@@ -283,7 +266,6 @@ class VideoProcessor:
         """Clean up segments if they timeout"""
         now = time.time()
         if now - self.last_update > SEGMENT_TIMEOUT_SECONDS and self.video_chunks:
-            print(f"[!] Timeout: Dropping incomplete segment {self.latest_segment_id} for camera {self.camera_id}")
             self.video_chunks = {}
             self.expected_chunks = None
             self.latest_segment_id = None
