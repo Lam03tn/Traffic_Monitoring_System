@@ -15,7 +15,7 @@ from kafka import KafkaProducer
 # ========== CONFIG ==========
 # ========== CONFIG ==========
 CONFIG_FILE = os.getenv('CONFIG_FILE', '/app/config.json')
-CAMERA_ID = os.getenv('CAMERA_ID', 'cam1')  # Default to cam1 if not set
+CAMERA_ID = os.getenv('CAMERA_ID', 'cam1')  
 
 # Load configuration from file
 with open(CONFIG_FILE, 'r') as f:
@@ -28,7 +28,6 @@ with open(CONFIG_FILE, 'r') as f:
 
 TOPIC_META = f"video-{CAMERA_ID}-meta"
 TOPIC_VIDEO = f"video-{CAMERA_ID}-raw"
-
 # ========== FUNCTIONS ==========
 
 def initialize_kafka_producers():
@@ -203,7 +202,7 @@ if __name__ == "__main__":
         rtsp_url = find_rtsp_url(CAMERA_ID)
         if not rtsp_url:
             print("[…] Waiting for camera stream to become available...")
-            time.sleep(3)
+            time.sleep(10)
             continue
         try:
             # width, height = get_video_resolution(rtsp_url)
@@ -212,4 +211,4 @@ if __name__ == "__main__":
             process_video_stream(rtsp_url, producer_meta, producer_video, width, height)
         except Exception as e:
             print(f"[✗] Top-level error: {e}")
-            time.sleep(3)
+            time.sleep(10)

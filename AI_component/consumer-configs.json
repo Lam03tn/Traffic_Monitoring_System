@@ -1,0 +1,36 @@
+{
+  "kafka": {
+    "bootstrap_servers": ["kafka1:9092", "kafka2:9092", "kafka3:9092"],
+    "group_id": "video_metadata_consumer_group"
+  },
+  "cassandra": {
+    "hosts": "cassandra",
+    "port": 9042,
+    "keyspace": "traffic_system",
+    "table": "camera_videos_bucketed"
+  },
+  "minio": {
+    "endpoint": "minio:9000",
+    "access_key": "minioadmin",
+    "secret_key": "minioadmin",
+    "bucket": "traffic-videos",
+    "violation_buckets": {
+      "configs": "violation-configs",
+      "videos": "violation-videos",
+      "images": "violation-images"
+    }
+  },
+  "triton": {
+    "url": "triton_server:8001",
+    "vehicle_detection_model": "vehicle_detection",
+    "plate_detection_model": "plate_detection",
+    "char_detection_model": "character_detection",
+    "model_version": "1"
+  },
+  "processing": {
+    "frame_rate_target": 3,
+    "segment_timeout_seconds": 60,
+    "batch_size": 16,
+    "config_check_interval": 60
+  }
+}

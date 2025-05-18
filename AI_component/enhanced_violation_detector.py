@@ -1,7 +1,6 @@
 import uuid
 import cv2
 import imageio
-from matplotlib import pyplot as plt
 import numpy as np
 import json
 import time
@@ -12,20 +11,28 @@ import minio
 from supervision import Detections
 from cassandra.cluster import Cluster
 from bytetrack.byte_track import ByteTrack
+import os
+import json
+CONFIG_FILE = os.environ.get("CONFIG_FILE", "/app/config.json")
+try:
+    with open(CONFIG_FILE, 'r') as f:
+        config = json.load(f)
+except FileNotFoundError:
+    raise FileNotFoundError(f"Configuration file {CONFIG_FILE} not found")
 
 class EnhancedViolationDetector:
-    def __init__(self, camera_id, minio_endpoint='localhost:9000', cassandra_host='localhost', config_check_interval=60):
-        self.camera_id = camera_id
+    def __init__(self, camera_id=None, minio_endpoint=None, cassandra_host=None, config_check_interval=None):
+        self.camera_id = camera_id or config.get("camera_id", "cam2")
         self.minio_client = minio.Minio(
-            minio_endpoint,
-            access_key="minioadmin",
-            secret_key="minioadmin",
+            minio_endpoint or config.get("minio", {}).get("endpoint", "localhost:9000"),
+            access_key=config.get("minio", {}).get("access_key", "minioadmin"),
+            secret_key=config.get("minio", {}).get("secret_key", "minioadmin"),
             secure=False
         )
-        self.cassandra_cluster = Cluster([cassandra_host])
-        self.cassandra_session = self.cassandra_cluster.connect('traffic_system')
-        
-        self.config_check_interval = config_check_interval  # Interval in seconds to check for config updates
+        cassandra_hosts = config.get("cassandra", {}).get("hosts", "localhost")
+        self.cassandra_cluster = Cluster([cassandra_hosts] if isinstance(cassandra_hosts, str) else cassandra_hosts)
+        self.cassandra_session = self.cassandra_cluster.connect(config.get("cassandra", {}).get("keyspace", "traffic_system"))
+        self.config_check_interval = config_check_interval or config.get("processing", {}).get("config_check_interval", 60)
         self.last_config_check = 0  # Timestamp of last config check
         self.config_etags = {}  # Store ETags or last_modified timestamps for configs
         
@@ -38,7 +45,6 @@ class EnhancedViolationDetector:
         else:
             print(f"Configurations loaded for camera {camera_id}. Violation detection enabled.")
         
-        self.track_history = defaultdict(lambda: deque(maxlen=40))
         self.data_deque = defaultdict(lambda: deque(maxlen=64))
         self.frame_buffer = deque(maxlen=60)  # 4 seconds at 30 fps
         self.traffic_light_state = 'unknown'
@@ -46,9 +52,9 @@ class EnhancedViolationDetector:
         
         # Initialize ByteTrack
         self.tracker = ByteTrack(
-            track_activation_threshold=0.6,
+            track_activation_threshold=0.35,
             lost_track_buffer=30,
-            minimum_matching_threshold=0.8,
+            minimum_matching_threshold=0.6,
             frame_rate=3
         )
         

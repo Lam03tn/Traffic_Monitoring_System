@@ -28,3 +28,13 @@ SELECT * FROM traffic_system.camera_videos_bucketed
 WHERE camera_id = 'cam5' AND time_bucket = '2025-05-04'
 ORDER BY timestamp DESC 
 LIMIT 1;
+
+trtexec --onnx=best.onnx --saveEngine=model.plan --minShapes=images:1x3x640x640 --optShapes=images:8x3x640x640 --maxShapes=images:32x3x640x640
+
+docker-compose -f .\docker-compose-producer.yaml build 
+docker-compose -f .\docker-compose-simulator.yaml build
+docker-compose -f .\docker-compose-consumer.yaml build 
+
+docker-compose -f .\docker-compose-producer.yaml create 
+docker-compose -f .\docker-compose-simulator.yaml create
+docker-compose -f .\docker-compose-consumer.yaml create 

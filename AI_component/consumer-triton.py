@@ -14,35 +14,37 @@ import av
 import boto3
 from botocore.client import Config
 from enhanced_violation_detector import EnhancedViolationDetector
+import json
+import os
 
-# Kafka settings
-CAMERA_ID = 'cam2'
-TOPIC_META = f'video-{CAMERA_ID}-meta'
-TOPIC_VIDEO = f'video-{CAMERA_ID}-raw'
-KAFKA_BOOTSTRAP_SERVERS = ['localhost:29092']
-GROUP_ID = 'video_metadata_consumer_group'
+# Load JSON config file
+CONFIG_FILE = os.environ.get("CONFIG_FILE", "/app/config.json")
+try:
+    with open(CONFIG_FILE, 'r') as f:
+        config = json.load(f)
+except FileNotFoundError:
+    raise FileNotFoundError(f"Configuration file {CONFIG_FILE} not found")
 
-# Cassandra settings
-CASSANDRA_HOSTS = 'localhost'
-CASSANDRA_PORT = 9042
-KEYSPACE = 'traffic_system'
-TABLE = 'camera_videos_bucketed'
+CAMERA_ID = os.getenv('CAMERA_ID', 'cam1')  
+TOPIC_META = f"video-{CAMERA_ID}-meta"
+TOPIC_VIDEO = f"video-{CAMERA_ID}-raw"
 
-# MinIO settings
-MINIO_ENDPOINT = "localhost:9000"
-MINIO_ACCESS_KEY = "minioadmin"
-MINIO_SECRET_KEY = "minioadmin"
-MINIO_BUCKET = "traffic-videos"
-
-# Triton settings
-TRITON_URL = "localhost:8001"
-MODEL_NAME = "vehicle_detection"
-MODEL_VERSION = "1"
-
-# Video processing settings
-FRAME_RATE_TARGET = 3  # 3 frames per second for inference
-SEGMENT_TIMEOUT_SECONDS = 60
-BATCH_SIZE = 16  # Batch size for inference
+KAFKA_BOOTSTRAP_SERVERS = config.get("kafka", {}).get("bootstrap_servers", "localhost:29092")
+GROUP_ID = config.get("kafka", {}).get("group_id", "video_metadata_consumer_group")
+CASSANDRA_HOSTS = config.get("cassandra", {}).get("hosts", "localhost")
+CASSANDRA_PORT = config.get("cassandra", {}).get("port", 9042)
+KEYSPACE = config.get("cassandra", {}).get("keyspace", "traffic_system")
+TABLE = config.get("cassandra", {}).get("table", "camera_videos_bucketed")
+MINIO_ENDPOINT = config.get("minio", {}).get("endpoint", "localhost:9000")
+MINIO_ACCESS_KEY = config.get("minio", {}).get("access_key", "minioadmin")
+MINIO_SECRET_KEY = config.get("minio", {}).get("secret_key", "minioadmin")
+MINIO_BUCKET = config.get("minio", {}).get("bucket", "traffic-videos")
+TRITON_URL = config.get("triton", {}).get("url", "localhost:8001")
+MODEL_NAME = config.get("triton", {}).get("vehicle_detection_model", "vehicle_detection")
+MODEL_VERSION = config.get("triton", {}).get("model_version", "1")
+FRAME_RATE_TARGET = config.get("processing", {}).get("frame_rate_target", 3)
+SEGMENT_TIMEOUT_SECONDS = config.get("processing", {}).get("segment_timeout_seconds", 60)
+BATCH_SIZE = config.get("processing", {}).get("batch_size", 16)
 
 # MinIO S3 client
 s3 = boto3.client(

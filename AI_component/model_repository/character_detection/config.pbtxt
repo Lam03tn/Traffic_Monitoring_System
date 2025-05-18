@@ -1,0 +1,44 @@
+name: "character_detection"
+platform: "tensorrt_plan"
+version_policy {
+  latest {
+    num_versions: 1
+  }
+}
+max_batch_size: 32
+input {
+  name: "images"
+  data_type: TYPE_FP32
+  dims: 3
+  dims: 640
+  dims: 640
+}
+output {
+  name: "output0"
+  data_type: TYPE_FP32
+  dims: 40
+  dims: 8400
+}
+instance_group {
+  count: 1
+  kind: KIND_GPU
+}
+default_model_filename: "model.plan"
+dynamic_batching {
+  preferred_batch_size: 1
+  preferred_batch_size: 2
+  preferred_batch_size: 4
+  preferred_batch_size: 8
+  preferred_batch_size: 16
+  preferred_batch_size: 32
+  max_queue_delay_microseconds: 500
+}
+optimization {
+  input_pinned_memory {
+    enable: true
+  }
+  output_pinned_memory {
+    enable: true
+  }
+}
+backend: "tensorrt"

@@ -1,4 +1,5 @@
 from datetime import datetime
+import os
 from fastapi import WebSocket, WebSocketDisconnect
 from kafka import KafkaConsumer, TopicPartition
 import asyncio
@@ -8,7 +9,8 @@ import time
 from typing import Optional
 from typing import Dict, Set, List, Optional
 
-KAFKA_BOOTSTRAP_SERVERS = ['localhost:29092']
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "")
+KAFKA_BOOTSTRAP_SERVERS = KAFKA_BOOTSTRAP_SERVERS.split(",") if KAFKA_BOOTSTRAP_SERVERS else []
 SEGMENT_TIMEOUT_SECONDS = 60
 
 class ConnectionManager:

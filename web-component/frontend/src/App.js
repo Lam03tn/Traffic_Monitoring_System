@@ -7,7 +7,6 @@ import './App.css';
 import { fetchCameras } from './services/cameraConfigService';
 
 const WEBSOCKET_URL = process.env.REACT_APP_WEBSOCKET_URL || 'ws://127.0.0.1:8000';
-console.log(WEBSOCKET_URL)
 
 function App() {
   const [cameras, setCameras] = useState([]);

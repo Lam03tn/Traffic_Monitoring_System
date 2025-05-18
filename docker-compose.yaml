@@ -1,5 +1,3 @@
-version: '3.7'
-
 services:
 
   haproxy:
@@ -13,7 +11,7 @@ services:
       - ./data-pipeline/configs/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
 
     networks:
-      - stream_net
+      - internal_net
       - cam_net
 
   rtsp_server_1:
@@ -28,8 +26,7 @@ services:
     environment:
       - MTX_LOGLEVEL=info
     networks:
-      - stream_net
-      - kafka_network  
+      - internal_net  
   
   rtsp_server_2:
     image: bluenviron/mediamtx:1.12.0-ffmpeg
@@ -43,8 +40,7 @@ services:
     environment:
       - MTX_LOGLEVEL=info
     networks:
-      - stream_net 
-      - kafka_network 
+      - internal_net
   
   rtsp_server_3:
     image: bluenviron/mediamtx:1.12.0-ffmpeg
@@ -58,8 +54,7 @@ services:
     environment:
       - MTX_LOGLEVEL=info
     networks:
-      - stream_net  
-      - kafka_network
+      - internal_net
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.9.0
@@ -69,29 +64,65 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
     networks:
-      - kafka_network
+      - internal_net
 
   # Kafka
-  kafka:
+  kafka1:
     image: confluentinc/cp-kafka:7.9.0
-    container_name: kafka
-    hostname: kafka
+    container_name: kafka1
+    hostname: kafka1
     ports:
       - "9092:9092"
       - "29092:29092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
-      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_NUM_PARTITIONS: 3
     depends_on:
       - zookeeper
     networks:
-      - kafka_network
+      - internal_net
+
+  kafka2:
+    image: confluentinc/cp-kafka:7.9.0
+    container_name: kafka2
+    hostname: kafka2
+    ports:
+      - "9093:9092"
+      - "29093:29093"
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka2:9092,PLAINTEXT_HOST://localhost:29093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+    depends_on:
+      - zookeeper
+    networks:
+      - internal_net
+
+  kafka3:
+    image: confluentinc/cp-kafka:7.9.0
+    container_name: kafka3
+    hostname: kafka3
+    ports:
+      - "9094:9092"
+      - "29094:29094"
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka3:9092,PLAINTEXT_HOST://localhost:29094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+    depends_on:
+      - zookeeper
+    networks:
+      - internal_net
 
   # Cassandra
   cassandra:
@@ -105,8 +136,10 @@ services:
       CASSANDRA_DC: datacenter1
       CASSANDRA_RACK: rack1
       CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
-    # volumes:
-    # #   - ./database-docker/cassandra-data:/var/lib/cassandra
+    volumes:
+      - ./database-docker/cassandra-data:/var/lib/cassandra
+    networks:
+      - internal_net
 
   cassandra-init:
     build:
@@ -114,7 +147,8 @@ services:
       dockerfile: Dockerfile.cassandra-init
     depends_on:
       - cassandra
-    restart: "no"
+    networks:
+      - internal_net
 
   # MinIO (object storage)
   minio:
@@ -129,8 +163,10 @@ services:
       - "9002:9001"
     volumes:
       - ./database-docker/minio-data:/data
+    networks:
+      - internal_net
 
-  triton-gpu:
+  triton_server:
     image: nvcr.io/nvidia/tritonserver:24.09-py3
     container_name: triton_server
     command: tritonserver --model-repository=/models
@@ -154,6 +190,8 @@ services:
               count: all
               capabilities: [gpu]
     runtime: nvidia
+    networks:
+      - internal_net
 
   backend:
     build:
@@ -162,10 +200,14 @@ services:
     container_name: backend
     ports:
       - "28000:8000"  
-
     volumes:
       - ./web-component/backend:/app/backend  
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka1:9092,kafka2:9092,kafka3:9092
+    networks:
+      - internal_net
     restart: always  
+
   frontend:
     build:
       context: ./web-component  
@@ -176,16 +218,17 @@ services:
     volumes:
       - ./web-component/frontend:/app/frontend  
     restart: always  
+    networks:
+      - internal_net
+      - browser_net
   
 volumes:
   minio-data:
   models:
 
 networks:
-  stream_net:
-    driver: bridge
-  kafka_network:
-    name: kafka_network
+  internal_net:
+    name: internal_net
     driver: bridge
   cam_net:
     name: cam_net
@@ -193,4 +236,7 @@ networks:
     ipam:
       config:
         - subnet: 192.168.100.0/24
+  browser_net:
+    name: browser_net
+    driver: bridge
   

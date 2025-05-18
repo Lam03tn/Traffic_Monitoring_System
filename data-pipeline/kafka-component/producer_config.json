@@ -4,7 +4,7 @@
         {"server_name": "rtsp_server_2", "api_port": 9997, "rtmp_port": 1935},
         {"server_name": "rtsp_server_3", "api_port": 9997, "rtmp_port": 1935}
     ],
-    "kafka_bootstrap_servers": ["kafka:9092"],
+    "kafka_bootstrap_servers": ["kafka1:9092", "kafka2:9092", "kafka3:9092"],
     "segment_duration": 10,
     "chunk_size": 524288,
     "debug": false

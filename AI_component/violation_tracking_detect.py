@@ -1,6 +1,5 @@
 import os
 import cv2
-from matplotlib import pyplot as plt
 import numpy as np
 import json
 import time
@@ -10,16 +9,27 @@ import io
 import re
 import tritonclient.grpc as triton_grpc
 from license_plate_module import postprocess, preprocess_frame, process_license_plate, is_box_inside, triton_infer
+import json
+import os
+
+CONFIG_FILE = os.environ.get("CONFIG_FILE", "/app/config.json")
+try:
+    with open(CONFIG_FILE, 'r') as f:
+        config = json.load(f)
+except FileNotFoundError:
+    raise FileNotFoundError(f"Configuration file {CONFIG_FILE} not found")
 
 class ViolationHandler:
     """Base class for handling specific violation types"""
-    def __init__(self, config, camera_id, triton_server_url="localhost:8001"):
+    def __init__(self, config, camera_id=None, triton_server_url=None):
         self.config = config
-        self.camera_id = camera_id
         self.roi = self.create_polygon(config.get('violation_config', [{}])[0].get('roi', {}))
         self.traffic_light_zone = self.create_polygon(config.get('violation_config', [{}])[0].get('traffic_light_zone', {}))
         self.violation_type = config.get('violation_type', 'unknown')
-        self.triton_client = triton_grpc.InferenceServerClient(url=triton_server_url)
+        self.camera_id = camera_id or config.get("camera_id", "cam2")
+        self.triton_client = triton_grpc.InferenceServerClient(
+            url=triton_server_url or config.get("triton", {}).get("url", "localhost:8001")
+        )
         
         # Initialize lane marking for line-crossing violations
         lane_marking = config.get('violation_config', [{}])[0].get('lane_marking', {})
@@ -158,7 +168,7 @@ class ViolationHandler:
 
 class TrafficLightViolationHandler(ViolationHandler):
     """Handler for traffic light violations with optimized license plate detection"""
-    def __init__(self, config, camera_id, triton_server_url="localhost:8001"):
+    def __init__(self, config, camera_id, triton_server_url=config.get("triton", {}).get("url", "localhost:8001")):
         super().__init__(config, camera_id, triton_server_url)
         self.previous_traffic_light_state = 'unknown'
         self.violation_history = {}
@@ -361,7 +371,6 @@ class TrafficLightViolationHandler(ViolationHandler):
                         
                         # Cập nhật lịch sử vi phạm
                         self.violation_history[track_id] = current_time
-
         self.previous_traffic_light_state = traffic_light_state
         return violations
 

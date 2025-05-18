@@ -1,0 +1,30 @@
+services:
+  consumer-cam1:
+    build:
+      context: ./AI_component
+      dockerfile: Dockerfile.consumer
+    environment:
+      - CAMERA_ID=cam1
+      - CONFIG_FILE=/app/config.json
+    container_name: cam1_consumer
+    volumes:
+      - ./AI_component/consumer-configs.json:/app/config.json:ro
+    networks:
+      - internal_net
+  
+  consumer-cam2:
+    build:
+      context: ./AI_component
+      dockerfile: Dockerfile.consumer
+    environment:
+      - CAMERA_ID=cam2
+      - CONFIG_FILE=/app/config.json
+    container_name: cam2_consumer
+    volumes:
+      - ./AI_component/consumer-configs.json:/app/config.json:ro
+    networks:
+      - internal_net
+
+networks:
+  internal_net:
+    external: true  

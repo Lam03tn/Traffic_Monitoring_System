@@ -2,7 +2,6 @@ import os
 import time
 import cv2
 import math
-from matplotlib import pyplot as plt
 import numpy as np
 import tritonclient.grpc as triton_grpc
 
@@ -30,7 +29,7 @@ def preprocess_plate_image(image):
         scale = 640 / w
         image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
 
-    # return image
+    return image
     # Grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -291,7 +290,7 @@ def read_plate(triton_client, plate_crop):
     # Postprocess character detection results
     num_detections, boxes, scores, class_ids = postprocess(char_output, char_original_size)
     
-    if num_detections < 7 or num_detections > 10:
+    if num_detections < 5 or num_detections > 10:
         return "unknown", (boxes, scores, class_ids)
 
     # Combine box, label, score
@@ -311,7 +310,7 @@ def read_plate(triton_client, plate_crop):
     for det in detections:
         overlap = False
         for kept in final_detections:
-            if iou(det["box"], kept["box"]) > 0.1:
+            if iou(det["box"], kept["box"]) > 0.3:
                 overlap = True
                 break
         if not overlap:
@@ -328,7 +327,7 @@ def read_plate(triton_client, plate_crop):
         y_sum += y_c
         center_list.append([x_c, y_c, label])
 
-    if len(center_list) < 7 or len(center_list) > 10:
+    if len(center_list) < 5 or len(center_list) > 10:
         return "unknown", (boxes, scores, class_ids)
 
     # Check for single or double line plate
@@ -377,9 +376,7 @@ def process_license_plate(triton_client, vehicle_crop):
     # Try different rotation configurations
     for cc in range(0, 2):
         for ct in range(0, 2):
-            # rotated_plate = deskew(processed_plate, cc, ct)
             rotated_plate = deskew(processed_plate, cc, ct)
-            # rotated_plate = preprocess_plate_image(rotated_plate)
 
             license_plate_text, char_result = read_plate(triton_client, rotated_plate)
             if char_result is not None and len(char_result[1]) > 0:
