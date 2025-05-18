@@ -1,0 +1,22 @@
+[
+    {
+        "cam_id": "1",
+        "name": "Cửa Nam - DBP",
+        "cam_ip": "192.168.100.11"
+    },
+    {
+        "cam_id": "2",
+        "name": "Lý Thường Kiệt Bà Triệu",
+        "cam_ip": "192.168.100.12"
+    },
+    {
+        "cam_id": "3",
+        "name": "Lý Thường Kiệt Bà Triệu",
+        "cam_ip": "192.168.100.13"
+    },
+    {
+        "cam_id": "4",
+        "name": ":Láng Hạ Thái Hà",
+        "cam_ip": "192.168.100.14"
+    }
+]

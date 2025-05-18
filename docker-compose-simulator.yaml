@@ -1,0 +1,96 @@
+version: "3.9"
+
+services:
+  cam1:
+    build:
+      context: ./Camera_Simulator_Stream
+      dockerfile: Dockerfile.simulator
+    container_name: cam1-1600x1200
+    environment:
+      - VIDEO_FILE=cam1.mp4
+      - STREAM_KEY=cam1
+      - HAPROXY_IP=haproxy:1935
+    volumes:
+      - ./videos:/videos
+    networks:
+      cam_net:
+        ipv4_address: 192.168.100.11
+
+  cam2:
+    build:
+      context: ./Camera_Simulator_Stream
+      dockerfile: Dockerfile.simulator
+    container_name: cam2-1600x1200
+    environment:
+      - VIDEO_FILE=cam2.mp4
+      - STREAM_KEY=cam2
+      - HAPROXY_IP=haproxy:1935
+    volumes:
+      - ./videos:/videos
+    networks:
+      cam_net:
+        ipv4_address: 192.168.100.12
+
+  cam3:
+    build:
+      context: ./Camera_Simulator_Stream
+      dockerfile: Dockerfile.simulator
+    container_name: cam3-1280x960
+    environment:
+      - VIDEO_FILE=cam3.mp4
+      - STREAM_KEY=cam3
+      - HAPROXY_IP=haproxy:1935
+    volumes:
+      - ./videos:/videos
+    networks:
+      cam_net:
+        ipv4_address: 192.168.100.13
+
+  cam4:
+    build:
+      context: ./Camera_Simulator_Stream
+      dockerfile: Dockerfile.simulator
+    container_name: cam4-640x480
+    environment:
+      - VIDEO_FILE=cam4.mp4
+      - STREAM_KEY=cam4
+      - HAPROXY_IP=haproxy:1935
+    volumes:
+      - ./videos:/videos
+    networks:
+      cam_net:
+        ipv4_address: 192.168.100.14
+
+  cam5-640x480:
+    build:
+      context: ./Camera_Simulator_Stream
+      dockerfile: Dockerfile.simulator
+    container_name: cam5-640x480
+    environment:
+      - VIDEO_FILE=cam5.mp4
+      - STREAM_KEY=cam5
+      - HAPROXY_IP=haproxy:1935
+    volumes:
+      - ./videos:/videos
+    networks:
+      cam_net:
+        ipv4_address: 192.168.100.15
+  
+  cam6-640x480:
+    build:
+      context: ./Camera_Simulator_Stream
+      dockerfile: Dockerfile.simulator
+    container_name: cam6-640x480
+    environment:
+      - VIDEO_FILE=cam6.mp4
+      - STREAM_KEY=cam6
+      - HAPROXY_IP=haproxy:1935
+    volumes:
+      - ./videos:/videos
+    networks:
+      cam_net:
+        ipv4_address: 192.168.100.16
+
+networks:
+  cam_net:
+    external: true 
