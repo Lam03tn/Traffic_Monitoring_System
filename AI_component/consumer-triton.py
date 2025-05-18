@@ -304,7 +304,7 @@ def process_complete_segment(segment_id, video_bytes, metadata):
         query = SimpleStatement(f"""
             INSERT INTO {TABLE} (camera_id, time_bucket, timestamp, video_id, video_url, inferences)
             VALUES (%s, %s, %s, %s, %s, %s)
-            USING TTL 86400
+            USING TTL 3600
         """)
         session.execute(query, (
             camera_id, time_bucket, timestamp, video_id, video_url, inferences_json
