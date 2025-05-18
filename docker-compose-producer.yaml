@@ -1,0 +1,32 @@
+version: '3.7'
+
+services:
+  kafka-producer-cam1:
+    build:
+      context: ./data-pipeline/kafka-component
+      dockerfile: Dockerfile.producer
+    environment:
+      - CAMERA_ID=cam1
+      - CONFIG_FILE=/app/config.json
+    container_name: cam1_producer
+    volumes:
+      - ./data-pipeline/kafka-component/producer_config.json:/app/config.json:ro
+    networks:
+      - kafka_network
+  
+  kafka-producer-cam2:
+    build:
+      context: ./data-pipeline/kafka-component
+      dockerfile: Dockerfile.producer
+    environment:
+      - CAMERA_ID=cam2
+      - CONFIG_FILE=/app/config.json
+    container_name: cam2_producer
+    volumes:
+      - ./data-pipeline/kafka-component/producer_config.json:/app/config.json:ro
+    networks:
+      - kafka_network
+
+networks:
+  kafka_network:
+    external: true  

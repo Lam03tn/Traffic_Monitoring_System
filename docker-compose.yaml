@@ -1,4 +1,4 @@
-version: '1.0'
+version: '3.7'
 
 services:
 
@@ -11,7 +11,6 @@ services:
       - "8888:8888"  # Stats dashboard
     volumes:
       - ./data-pipeline/configs/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-      # - ./data-pipeline/haproxy/syslog.sock:/dev/log
 
     networks:
       - stream_net
@@ -29,7 +28,8 @@ services:
     environment:
       - MTX_LOGLEVEL=info
     networks:
-      - stream_net  
+      - stream_net
+      - kafka_network  
   
   rtsp_server_2:
     image: bluenviron/mediamtx:1.12.0-ffmpeg
@@ -43,7 +43,8 @@ services:
     environment:
       - MTX_LOGLEVEL=info
     networks:
-      - stream_net  
+      - stream_net 
+      - kafka_network 
   
   rtsp_server_3:
     image: bluenviron/mediamtx:1.12.0-ffmpeg
@@ -58,6 +59,7 @@ services:
       - MTX_LOGLEVEL=info
     networks:
       - stream_net  
+      - kafka_network
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.9.0
@@ -66,6 +68,8 @@ services:
       - "2181:2181"
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
+    networks:
+      - kafka_network
 
   # Kafka
   kafka:
@@ -86,6 +90,8 @@ services:
       KAFKA_NUM_PARTITIONS: 1
     depends_on:
       - zookeeper
+    networks:
+      - kafka_network
 
   # Cassandra
   cassandra:
@@ -101,9 +107,7 @@ services:
       CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
     # volumes:
     # #   - ./database-docker/cassandra-data:/var/lib/cassandra
-    #   - ./database_init/cassandra_schema.cql:/cassandra_schema.cql
-    #   - ./database_init/init_cassandra.sh:/init_cassandra.sh
-    # entrypoint: ["/bin/bash", "/init_cassandra.sh"]
+
   cassandra-init:
     build:
       context: .
@@ -176,10 +180,12 @@ services:
 volumes:
   minio-data:
   models:
-  # redis_data:
 
 networks:
   stream_net:
+    driver: bridge
+  kafka_network:
+    name: kafka_network
     driver: bridge
   cam_net:
     name: cam_net
@@ -187,3 +193,4 @@ networks:
     ipam:
       config:
         - subnet: 192.168.100.0/24
+  

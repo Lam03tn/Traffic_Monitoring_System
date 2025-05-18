@@ -28,8 +28,4 @@ tensorrt==10.8.0.43
 tritonclient==2.54.0
 tritonclient[all]
 supervision==0.25.1
-# realesrgan
-# pytesseract
-# fast_plate_ocr
-# paddleocr
-# paddlepaddle
+requests==2.32.3

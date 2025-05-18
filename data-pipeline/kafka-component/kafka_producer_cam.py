@@ -1,6 +1,6 @@
-from datetime import datetime
 from fractions import Fraction
 import io
+import os
 import subprocess
 import threading
 import time
@@ -13,20 +13,21 @@ import ffmpeg
 from kafka import KafkaProducer
 
 # ========== CONFIG ==========
-CAMERA_ID = "cam2"  # Path name in MediaMTX
+# ========== CONFIG ==========
+CONFIG_FILE = os.getenv('CONFIG_FILE', '/app/config.json')
+CAMERA_ID = os.getenv('CAMERA_ID', 'cam1')  # Default to cam1 if not set
 
-MEDIAMTX_CONFIG = [
-    {"server_name": "localhost", "api_port": 9997, "rtmp_port": 1936},
-    {"server_name": "localhost", "api_port": 9998, "rtmp_port": 1937},
-    {"server_name": "localhost", "api_port": 9999, "rtmp_port": 1938}
-]
+# Load configuration from file
+with open(CONFIG_FILE, 'r') as f:
+    config = json.load(f)
+    MEDIAMTX_CONFIG = config['mediamtx_servers']
+    KAFKA_BOOTSTRAP_SERVERS = config.get('kafka_bootstrap_servers', 'localhost:29092')
+    SEGMENT_DURATION = config.get('segment_duration', 10)  # seconds
+    CHUNK_SIZE = config.get('chunk_size', 512 * 1024)  # 512KB
+    DEBUG = config.get('debug', False)
 
-KAFKA_BOOTSTRAP_SERVERS = 'localhost:29092'
 TOPIC_META = f"video-{CAMERA_ID}-meta"
 TOPIC_VIDEO = f"video-{CAMERA_ID}-raw"
-SEGMENT_DURATION = 10  # seconds
-CHUNK_SIZE = 512 * 1024  # 512KB
-DEBUG = False
 
 # ========== FUNCTIONS ==========
 
@@ -165,7 +166,6 @@ def process_video_stream(rtsp_url, producer_meta, producer_video, width, height)
         container = av.open(rtsp_url)
         stream = container.streams.video[0]
         stream.thread_type = 'AUTO'
-        # stream.thread_type = 'FRAME'
 
         frames = []
         segment_index = 0
@@ -176,20 +176,6 @@ def process_video_stream(rtsp_url, producer_meta, producer_video, width, height)
         for packet in container.demux(stream):
             for frame in packet.decode():
                 img = frame.to_ndarray(format='bgr24')
-
-                timestamp = time.time()
-                timestamp_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                cv2.putText(
-                    img,
-                    timestamp_str,
-                    (10, 30),  # Vị trí góc trên bên trái
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,  # Kích thước chữ
-                    (0, 255, 0),  # Màu xanh lá (BGR)
-                    2  # Độ dày chữ
-                )
-
-
                 frames.append(img)
 
                 if time.time() - start_time >= SEGMENT_DURATION:
@@ -217,7 +203,7 @@ if __name__ == "__main__":
         rtsp_url = find_rtsp_url(CAMERA_ID)
         if not rtsp_url:
             print("[…] Waiting for camera stream to become available...")
-            time.sleep(10)
+            time.sleep(3)
             continue
         try:
             # width, height = get_video_resolution(rtsp_url)
@@ -226,4 +212,4 @@ if __name__ == "__main__":
             process_video_stream(rtsp_url, producer_meta, producer_video, width, height)
         except Exception as e:
             print(f"[✗] Top-level error: {e}")
-            time.sleep(10)
+            time.sleep(3)

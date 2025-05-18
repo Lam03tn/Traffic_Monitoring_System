@@ -1,0 +1,30 @@
+## Simulation 3 RTSP cam 1,2,3
+
+ffmpeg -re -stream_loop -1 -i "C:\Users\LamNH\Desktop\assignment\ĐATN\Traffic-system\toy-data\CuaNam-DBP.mp4" -c:v copy -f rtsp -rtsp_transport tcp rtsp://localhost:8554/cam1
+ffmpeg -re -stream_loop -1 -i "C:\Users\LamNH\Desktop\assignment\ĐATN\Traffic-system\toy-data\LyThuongKiet-BaTrieu.mp4" -c:v copy -f rtsp -rtsp_transport tcp rtsp://localhost:8554/cam2
+ffmpeg -re -stream_loop -1 -i "C:\Users\LamNH\Desktop\assignment\ĐATN\Traffic-system\toy-data\LyThuongKiet-HangBai.mp4" -c:v copy -f rtsp -rtsp_transport tcp rtsp://localhost:8554/cam3
+
+## Simulation 3 RTSP cam 1,2,3 
+ffmpeg -re -stream_loop -1 -i toy-data/CuaNam-DBP.mp4 -c:v libx264 -preset veryfast -f flv rtmp://localhost:1935/live/cam1
+ffmpeg -re -stream_loop -1 -i toy-data/vecteezy_traffic-cars-passing-in-road-with-asphalt-with-cracks-seen_36990287.mov -c:v libx264 -preset veryfast -f flv rtmp://localhost:1935/live/cam2
+ffmpeg -re -stream_loop -1 -i toy-data/16h15.7.9.22.mp4 -c:v libx264 -preset veryfast -f flv rtmp://localhost:1935/live/cam1
+ffmpeg -re -stream_loop -1 -i toy-data/16h15.7.9.22.mp4 -c:v libx264 -preset veryfast -f flv -flvflags no_duration_filesize -reconnect 5 -reconnect_at_eof 5 -reconnect_streamed 5 -reconnect_delay_max 5 "rtmp://localhost:1935/live/cam1?failover=1"
+
+## Kafka
+kafka-console-consumer --bootstrap-server kafka:9092 --topic video-cam1-meta --from-beginning
+kafka-console-consumer --bootstrap-server kafka:9092 --topic video-cam1-raw --from-beginning
+
+kafka-topics --bootstrap-server kafka:9092 --delete --topic video-cam1
+kafka-topics --bootstrap-server localhost:9092 --list
+
+## Unicorn
+uvicorn web-component.backend.main:app --reload
+http://localhost:8000/redoc
+http://localhost:8000/docs
+
+rtmp://localhost:1937/stream/cam1
+
+SELECT * FROM traffic_system.camera_videos_bucketed 
+WHERE camera_id = 'cam5' AND time_bucket = '2025-05-04'
+ORDER BY timestamp DESC 
+LIMIT 1;
