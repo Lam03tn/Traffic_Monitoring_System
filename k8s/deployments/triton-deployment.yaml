@@ -1,0 +1,52 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: triton-server
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: triton-server
+  template:
+    metadata:
+      labels:
+        app: triton-server
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-gpu
+      containers:
+      - name: triton-server
+        image: nvcr.io/nvidia/tritonserver:24.09-py3
+        command: ["tritonserver", "--model-repository=/models"]
+        ports:
+        - containerPort: 8000
+          protocol: TCP
+          name: http
+        - containerPort: 8001
+          protocol: TCP
+          name: grpc
+        - containerPort: 8002
+          protocol: TCP
+          name: metrics
+        env:
+        - name: TRITONSERVER_LOG_VERBOSE
+          value: "1"
+        volumeMounts:
+        - name: model-repository
+          mountPath: /models
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+        securityContext:
+          capabilities:
+            add: ["SYS_ADMIN"]
+      volumes:
+      - name: model-repository
+        persistentVolumeClaim:
+          claimName: model-repo-pvc
+      shmSize: 4Gi
+      ulimits:
+        memlock: -1
+        stack: 67108864

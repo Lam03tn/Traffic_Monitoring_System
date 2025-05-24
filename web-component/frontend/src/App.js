@@ -6,8 +6,10 @@ import ViolationsQuery from './components/ViolationsQuery';
 import './App.css';
 import { fetchCameras } from './services/cameraConfigService';
 
-const WEBSOCKET_URL = process.env.REACT_APP_WEBSOCKET_URL || 'ws://127.0.0.1:8000';
-
+const WEBSOCKET_URL = 
+  (window.location.protocol === 'https:' ? 'wss://' : 'ws://') +
+  window.location.host +
+  '/ws';
 function App() {
   const [cameras, setCameras] = useState([]);
   const [selectedCamera, setSelectedCamera] = useState(null);

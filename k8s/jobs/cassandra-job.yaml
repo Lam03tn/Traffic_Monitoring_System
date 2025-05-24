@@ -1,0 +1,28 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cassandra-schema-init
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: cassandra-schema-init
+        image: cassandra:4.1.7
+        command:
+          - sh
+          - -c
+          - |
+            until cqlsh cassandra-0.cassandra.default.svc.cluster.local 9042 -e "describe keyspaces"; do
+              echo "Waiting for Cassandra to be ready..."
+              sleep 5
+            done
+            cqlsh cassandra.default.svc.cluster.local 9042 -f /scripts/init.cql
+        volumeMounts:
+          - name: cassandra-init-script
+            mountPath: /scripts
+      volumes:
+        - name: cassandra-init-script
+          configMap:
+            name: cassandra-init-scripts

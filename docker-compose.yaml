@@ -194,10 +194,7 @@ services:
       - internal_net
 
   backend:
-    build:
-      context: ./web-component  
-      dockerfile: Dockerfile.backend  
-    container_name: backend
+    image: lhn102/traffic-fastapi-backend:latest
     ports:
       - "28000:8000"  
     volumes:
@@ -209,9 +206,7 @@ services:
     restart: always  
 
   frontend:
-    build:
-      context: ./web-component  
-      dockerfile: Dockerfile.frontend  
+    image: lhn102/traffic-react-frontend:latest 
     container_name: frontend
     ports:
       - "80:80"  

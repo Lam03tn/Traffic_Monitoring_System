@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cassandra-init-scripts
+data:
+  init.cql: |
+    CREATE KEYSPACE IF NOT EXISTS traffic_system
+    WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 2};
+
+    CREATE TABLE IF NOT EXISTS traffic_system.violations (
+        violation_type text,
+        violation_date text,
+        violation_time timestamp,
+        violation_id uuid,
+        license_plate text,
+        camera_id text,
+        processed_time timestamp,
+        status text,
+        video_evidence_url text,
+        image_evidence_url text,
+        PRIMARY KEY ((status, violation_date, violation_type), violation_time, violation_id)
+    ) WITH CLUSTERING ORDER BY (violation_time DESC);
+
+    CREATE TABLE IF NOT EXISTS traffic_system.camera_videos_bucketed (
+        camera_id text,
+        time_bucket text,
+        timestamp timestamp,
+        video_id uuid,
+        video_url text,
+        inferences text,
+        PRIMARY KEY ((camera_id, time_bucket), timestamp, video_id)
+    ) WITH CLUSTERING ORDER BY (timestamp DESC);

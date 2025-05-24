@@ -175,6 +175,11 @@ def process_video_stream(rtsp_url, producer_meta, producer_video, width, height)
         for packet in container.demux(stream):
             for frame in packet.decode():
                 img = frame.to_ndarray(format='bgr24')
+
+                timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
+                cv2.putText(img, timestamp, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                            1, (0, 255, 0), 4, cv2.LINE_AA)
+
                 frames.append(img)
 
                 if time.time() - start_time >= SEGMENT_DURATION:

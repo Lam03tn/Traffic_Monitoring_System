@@ -13,9 +13,7 @@ services:
       - internal_net
   
   kafka-producer-cam2:
-    build:
-      context: ./data-pipeline/kafka-component
-      dockerfile: Dockerfile.producer
+    image: lhn102/traffic-producer:latest
     environment:
       - CAMERA_ID=cam2
       - CONFIG_FILE=/app/config.json

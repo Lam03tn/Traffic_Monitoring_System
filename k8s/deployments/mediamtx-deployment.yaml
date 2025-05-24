@@ -1,0 +1,117 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rtsp-server-1
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rtsp-server-1
+  template:
+    metadata:
+      labels:
+        app: rtsp-server-1
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-normal
+      containers:
+      - name: mediamtx
+        image: bluenviron/mediamtx:1.12.0-ffmpeg
+        ports:
+        - containerPort: 1935
+          protocol: TCP
+          name: rtmp
+        - containerPort: 9997
+          protocol: TCP
+          name: api
+        env:
+        - name: MTX_LOGLEVEL
+          value: "info"
+        volumeMounts:
+        - name: mediamtx-config
+          mountPath: /mediamtx.yml
+          subPath: mediamtx.yml
+      volumes: 
+      - name: mediamtx-config
+        configMap:
+          name: mediamtx-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rtsp-server-2
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rtsp-server-2
+  template:
+    metadata:
+      labels:
+        app: rtsp-server-2
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-normal
+      containers:
+      - name: mediamtx
+        image: bluenviron/mediamtx:1.12.0-ffmpeg
+        ports:
+        - containerPort: 1935
+          protocol: TCP
+          name: rtmp
+        - containerPort: 9997
+          protocol: TCP
+          name: api
+        env:
+        - name: MTX_LOGLEVEL
+          value: "info"
+        volumeMounts:
+        - name: mediamtx-config
+          mountPath: /mediamtx.yml
+          subPath: mediamtx.yml
+      volumes: 
+      - name: mediamtx-config
+        configMap:
+          name: mediamtx-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rtsp-server-3
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rtsp-server-3
+  template:
+    metadata:
+      labels:
+        app: rtsp-server-3
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-normal
+      containers:
+      - name: mediamtx
+        image: bluenviron/mediamtx:1.12.0-ffmpeg
+        ports:
+        - containerPort: 1935
+          protocol: TCP
+          name: rtmp
+        - containerPort: 9997
+          protocol: TCP
+          name: api
+        env:
+        - name: MTX_LOGLEVEL
+          value: "info"
+        volumeMounts:
+        - name: mediamtx-config
+          mountPath: /mediamtx.yml
+          subPath: mediamtx.yml
+      volumes: 
+      - name: mediamtx-config
+        configMap:
+          name: mediamtx-config

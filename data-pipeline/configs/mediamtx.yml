@@ -70,7 +70,7 @@ authInternalUsers:
   - action: playback
     path:
   - action: api
-
+    path:
 
   # Default administrator.
   # This allows to use API, metrics and PPROF without authentication,

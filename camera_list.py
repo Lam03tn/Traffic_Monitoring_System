@@ -5,7 +5,7 @@ import io
 
 # Khởi tạo client MinIO
 client = Minio(
-    endpoint="localhost:9000",  # Thay đổi nếu cần (vd: "minio-server:9000")
+    endpoint="minio:9000",  # Thay đổi nếu cần (vd: "minio-server:9000")
     access_key="minioadmin",
     secret_key="minioadmin",
     secure=False  # Đặt True nếu dùng HTTPS

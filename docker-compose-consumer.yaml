@@ -1,8 +1,6 @@
 services:
   consumer-cam1:
-    build:
-      context: ./AI_component
-      dockerfile: Dockerfile.consumer
+    image: lhn102/traffic-consumer:latest
     environment:
       - CAMERA_ID=cam1
       - CONFIG_FILE=/app/config.json
@@ -13,9 +11,7 @@ services:
       - internal_net
   
   consumer-cam2:
-    build:
-      context: ./AI_component
-      dockerfile: Dockerfile.consumer
+    image: lhn102/traffic-consumer:latest
     environment:
       - CAMERA_ID=cam2
       - CONFIG_FILE=/app/config.json

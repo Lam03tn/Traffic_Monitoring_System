@@ -1,0 +1,74 @@
+---
+# Deployment for cam1 producer
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cam1-producer
+  namespace: default # Adjust namespace as needed
+  labels:
+    app: cam1-producer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cam1-producer
+  template:
+    metadata:
+      labels:
+        app: cam1-producer
+    spec:
+      containers:
+      - name: cam1-producer
+        image: lhn102/traffic-producer:latest
+        env:
+        - name: CAMERA_ID
+          value: "cam1"
+        - name: CONFIG_FILE
+          value: "/app/config.json"
+        volumeMounts:
+        - name: config-volume
+          mountPath: "/app/config.json"
+          subPath: config.json
+          readOnly: true
+      volumes:
+      - name: config-volume
+        configMap:
+          name: producer-config
+---
+# Deployment for cam2 producer
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cam2-producer
+  namespace: default # Adjust namespace as needed
+  labels:
+    app: cam2-producer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cam2-producer
+  template:
+    metadata:
+      labels:
+        app: cam2-producer
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-normal
+      containers:
+      - name: cam2-producer
+        image: lhn102/traffic-producer:latest
+        env:
+        - name: CAMERA_ID
+          value: "cam2"
+        - name: CONFIG_FILE
+          value: "/app/config.json"
+        volumeMounts:
+        - name: config-volume
+          mountPath: "/app/config.json"
+          subPath: config.json
+          readOnly: true
+      volumes:
+      - name: config-volume
+        configMap:
+          name: producer-config

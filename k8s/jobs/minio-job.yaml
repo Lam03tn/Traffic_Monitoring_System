@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: upload-camera-configs
+spec:
+  template:
+    spec:
+      containers:
+      - name: mc
+        image: minio/mc  # Sử dụng MinIO Client image
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            # Tạo file cameras.json tạm thời
+            echo '[{"id":"cam1","name":"Camera Lê Duẩn - Nguyễn Thái Học","location":"Lê Duẩn - Nguyễn Thái Học","status":"online"},{"id":"cam2","name":"Camera Phố Huế - Trần Khát Chân","location":"Phố Huế - Trần Khát Chân","status":"online"},{"id":"cam3","name":"Camera Láng Hạ - Thái Hà","location":"Láng Hạ - Thái Hà","status":"online"},{"id":"cam4","name":"Camera Lý Thường Kiệt - Hàng Bài","location":"Lý Thường Kiệt - Hàng Bài","status":"online"},{"id":"cam5","name":"Camera Cửa Nam - Điện Biên Phủ","location":"Cửa Nam - Điện Biên Phủ","status":"online"},{"id":"cam6","name":"Camera Lý Thường Kiệt - Bà Triệu","location":"Lý Thường Kiệt - Bà Triệu","status":"online"}]' > cameras.json &&
+            
+            # Cấu hình MinIO client
+            mc alias set minio http://minio:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD &&
+            
+            # Tạo bucket nếu chưa tồn tại
+            mc mb minio/camera-configs || true &&
+            
+            # Tải lên file
+            mc cp cameras.json minio/camera-configs/cameras.json &&
+            
+            echo "File uploaded successfully"
+        env:
+          - name: MINIO_ROOT_USER
+            valueFrom:
+              secretKeyRef:
+                name: minio-secret
+                key: root-user
+          - name: MINIO_ROOT_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: minio-secret
+                key: root-password
+      restartPolicy: Never
+  backoffLimit: 2
