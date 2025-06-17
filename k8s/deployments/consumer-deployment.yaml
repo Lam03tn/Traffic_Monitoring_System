@@ -1,0 +1,72 @@
+---
+# Deployment for consumer-cam1
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer-cam1
+  namespace: default
+  labels:
+    app: consumer-cam1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consumer-cam1
+  template:
+    metadata:
+      labels:
+        app: consumer-cam1
+    spec:
+      containers:
+      - name: cam1-consumer
+        image: lhn102/traffic-consumer:latest
+        env:
+        - name: CAMERA_ID
+          value: "cam1"
+        - name: CONFIG_FILE
+          value: "/app/config.json"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config.json
+          subPath: config.json
+          readOnly: true
+      volumes:
+      - name: config-volume
+        configMap:
+          name: consumer-config
+---
+# Deployment for consumer-cam2
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer-cam2
+  namespace: default
+  labels:
+    app: consumer-cam2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consumer-cam2
+  template:
+    metadata:
+      labels:
+        app: consumer-cam2
+    spec:
+      containers:
+      - name: cam2-consumer
+        image: lhn102/traffic-consumer:latest
+        env:
+        - name: CAMERA_ID
+          value: "cam2"
+        - name: CONFIG_FILE
+          value: "/app/config.json"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config.json
+          subPath: config.json
+          readOnly: true
+      volumes:
+      - name: config-volume
+        configMap:
+          name: consumer-config
