@@ -38,3 +38,28 @@ kubectl apply -f
 to apply serrvices, deployments, configmaps, and secrets
 
 Run Jobs to init database. Create VPN to tranmiss RTSP into cluster and Cloudflare to expose web through port 31000
+
+# K8S - Components
+### HAProxy and MediaMTX
+![haproxy-mediamtx](https://github.com/user-attachments/assets/aebb2ee5-8545-479d-9460-ff4fdee15662)
+
+### Kafka and Zookeeper
+![kafka](https://github.com/user-attachments/assets/b595cdfd-1994-49e3-a98a-525ed8038d5c)
+
+### Web component
+![web](https://github.com/user-attachments/assets/5bdbed48-c9ee-4437-b5bb-816cb64cd873)
+
+### AI component
+![ai-component](https://github.com/user-attachments/assets/76fe2a0d-de6e-4d96-bb98-b7c8d7f45a9a)
+
+# Results - Screen
+
+![giam-sat-video](https://github.com/user-attachments/assets/f97e3fa0-49ee-4ef7-b166-b0658a262f8a)
+
+![them-cau-hinh (1)](https://github.com/user-attachments/assets/42c15a8b-945e-4182-96e7-12eb695ecb4e)
+
+![chi-tiet (1)](https://github.com/user-attachments/assets/ed46230a-d7c3-4c0c-a9be-f56991bfe276)
+
+
+
+
